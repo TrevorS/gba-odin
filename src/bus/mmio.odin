@@ -1,5 +1,7 @@
 package bus
 
+import "../ppu"
+
 // I/O Register addresses
 IO_DISPCNT :: 0x000
 IO_GREENSWP :: 0x002
@@ -115,6 +117,33 @@ read_io8 :: proc(bus: ^Bus, addr: u32) -> (value: u8, cycles: u8) {
     offset := addr & 0x3FF
 
     switch offset {
+    // PPU registers
+    case IO_DISPCNT:
+        if bus.ppu != nil {
+            value = u8(ppu.read_dispcnt(bus.ppu))
+        }
+    case IO_DISPCNT + 1:
+        if bus.ppu != nil {
+            value = u8(ppu.read_dispcnt(bus.ppu) >> 8)
+        }
+    case IO_DISPSTAT:
+        if bus.ppu != nil {
+            value = u8(ppu.read_dispstat(bus.ppu))
+        }
+    case IO_DISPSTAT + 1:
+        if bus.ppu != nil {
+            value = u8(ppu.read_dispstat(bus.ppu) >> 8)
+        }
+    case IO_VCOUNT:
+        if bus.ppu != nil {
+            value = u8(bus.ppu.vcount)
+        }
+    case IO_VCOUNT + 1:
+        if bus.ppu != nil {
+            value = u8(bus.ppu.vcount >> 8)
+        }
+
+    // Interrupt registers
     case IO_IE:
         value = u8(bus.ie)
     case IO_IE + 1:
@@ -154,6 +183,53 @@ read_io16 :: proc(bus: ^Bus, addr: u32) -> (value: u16, cycles: u8) {
     offset := addr & 0x3FE // Force halfword align
 
     switch offset {
+    // PPU registers
+    case IO_DISPCNT:
+        if bus.ppu != nil {
+            value = ppu.read_dispcnt(bus.ppu)
+        }
+    case IO_DISPSTAT:
+        if bus.ppu != nil {
+            value = ppu.read_dispstat(bus.ppu)
+        }
+    case IO_VCOUNT:
+        if bus.ppu != nil {
+            value = bus.ppu.vcount
+        }
+    case IO_BG0CNT:
+        if bus.ppu != nil {
+            value = ppu.read_bgcnt(bus.ppu, 0)
+        }
+    case IO_BG1CNT:
+        if bus.ppu != nil {
+            value = ppu.read_bgcnt(bus.ppu, 1)
+        }
+    case IO_BG2CNT:
+        if bus.ppu != nil {
+            value = ppu.read_bgcnt(bus.ppu, 2)
+        }
+    case IO_BG3CNT:
+        if bus.ppu != nil {
+            value = ppu.read_bgcnt(bus.ppu, 3)
+        }
+    case IO_WININ:
+        if bus.ppu != nil {
+            value = bus.ppu.winin
+        }
+    case IO_WINOUT:
+        if bus.ppu != nil {
+            value = bus.ppu.winout
+        }
+    case IO_BLDCNT:
+        if bus.ppu != nil {
+            value = bus.ppu.bldcnt
+        }
+    case IO_BLDALPHA:
+        if bus.ppu != nil {
+            value = bus.ppu.bldalpha
+        }
+
+    // Interrupt registers
     case IO_IE:
         value = bus.ie
     case IO_IF:
@@ -167,10 +243,6 @@ read_io16 :: proc(bus: ^Bus, addr: u32) -> (value: u16, cycles: u8) {
         value = 0x03FF
     case IO_KEYCNT:
         value = 0 // Keypad IRQ control (stub)
-    case IO_DISPSTAT:
-        value = 0 // Display status (stub for Phase 1)
-    case IO_VCOUNT:
-        value = 0 // Current scanline (stub for Phase 1)
     case:
         value = 0
     }
@@ -184,6 +256,10 @@ read_io32 :: proc(bus: ^Bus, addr: u32) -> (value: u32, cycles: u8) {
     offset := addr & 0x3FC
 
     switch offset {
+    case IO_DISPCNT:
+        if bus.ppu != nil {
+            value = u32(ppu.read_dispcnt(bus.ppu)) | (u32(ppu.read_dispstat(bus.ppu)) << 16)
+        }
     case IO_IE:
         value = u32(bus.ie) | (u32(bus.if_) << 16)
     case IO_WAITCNT:
@@ -208,6 +284,29 @@ write_io8 :: proc(bus: ^Bus, addr: u32, value: u8) -> (cycles: u8) {
     offset := addr & 0x3FF
 
     switch offset {
+    // PPU registers (handled as 16-bit pairs)
+    case IO_DISPCNT:
+        if bus.ppu != nil {
+            current := ppu.read_dispcnt(bus.ppu)
+            ppu.write_dispcnt(bus.ppu, (current & 0xFF00) | u16(value))
+        }
+    case IO_DISPCNT + 1:
+        if bus.ppu != nil {
+            current := ppu.read_dispcnt(bus.ppu)
+            ppu.write_dispcnt(bus.ppu, (current & 0x00FF) | (u16(value) << 8))
+        }
+    case IO_DISPSTAT:
+        if bus.ppu != nil {
+            current := ppu.read_dispstat(bus.ppu)
+            ppu.write_dispstat(bus.ppu, (current & 0xFF00) | u16(value))
+        }
+    case IO_DISPSTAT + 1:
+        if bus.ppu != nil {
+            current := ppu.read_dispstat(bus.ppu)
+            ppu.write_dispstat(bus.ppu, (current & 0x00FF) | (u16(value) << 8))
+        }
+
+    // Interrupt registers
     case IO_IE:
         bus.ie = (bus.ie & 0xFF00) | u16(value)
     case IO_IE + 1:
@@ -241,6 +340,137 @@ write_io16 :: proc(bus: ^Bus, addr: u32, value: u16) -> (cycles: u8) {
     offset := addr & 0x3FE
 
     switch offset {
+    // PPU registers
+    case IO_DISPCNT:
+        if bus.ppu != nil {
+            ppu.write_dispcnt(bus.ppu, value)
+        }
+    case IO_DISPSTAT:
+        if bus.ppu != nil {
+            ppu.write_dispstat(bus.ppu, value)
+        }
+    case IO_BG0CNT:
+        if bus.ppu != nil {
+            ppu.write_bgcnt(bus.ppu, 0, value)
+        }
+    case IO_BG1CNT:
+        if bus.ppu != nil {
+            ppu.write_bgcnt(bus.ppu, 1, value)
+        }
+    case IO_BG2CNT:
+        if bus.ppu != nil {
+            ppu.write_bgcnt(bus.ppu, 2, value)
+        }
+    case IO_BG3CNT:
+        if bus.ppu != nil {
+            ppu.write_bgcnt(bus.ppu, 3, value)
+        }
+    case IO_BG0HOFS:
+        if bus.ppu != nil {
+            bus.ppu.bghofs[0] = value & 0x1FF
+        }
+    case IO_BG0VOFS:
+        if bus.ppu != nil {
+            bus.ppu.bgvofs[0] = value & 0x1FF
+        }
+    case IO_BG1HOFS:
+        if bus.ppu != nil {
+            bus.ppu.bghofs[1] = value & 0x1FF
+        }
+    case IO_BG1VOFS:
+        if bus.ppu != nil {
+            bus.ppu.bgvofs[1] = value & 0x1FF
+        }
+    case IO_BG2HOFS:
+        if bus.ppu != nil {
+            bus.ppu.bghofs[2] = value & 0x1FF
+        }
+    case IO_BG2VOFS:
+        if bus.ppu != nil {
+            bus.ppu.bgvofs[2] = value & 0x1FF
+        }
+    case IO_BG3HOFS:
+        if bus.ppu != nil {
+            bus.ppu.bghofs[3] = value & 0x1FF
+        }
+    case IO_BG3VOFS:
+        if bus.ppu != nil {
+            bus.ppu.bgvofs[3] = value & 0x1FF
+        }
+    case IO_BG2PA:
+        if bus.ppu != nil {
+            bus.ppu.bg2pa = i16(value)
+        }
+    case IO_BG2PB:
+        if bus.ppu != nil {
+            bus.ppu.bg2pb = i16(value)
+        }
+    case IO_BG2PC:
+        if bus.ppu != nil {
+            bus.ppu.bg2pc = i16(value)
+        }
+    case IO_BG2PD:
+        if bus.ppu != nil {
+            bus.ppu.bg2pd = i16(value)
+        }
+    case IO_BG3PA:
+        if bus.ppu != nil {
+            bus.ppu.bg3pa = i16(value)
+        }
+    case IO_BG3PB:
+        if bus.ppu != nil {
+            bus.ppu.bg3pb = i16(value)
+        }
+    case IO_BG3PC:
+        if bus.ppu != nil {
+            bus.ppu.bg3pc = i16(value)
+        }
+    case IO_BG3PD:
+        if bus.ppu != nil {
+            bus.ppu.bg3pd = i16(value)
+        }
+    case IO_WIN0H:
+        if bus.ppu != nil {
+            bus.ppu.win0h = value
+        }
+    case IO_WIN1H:
+        if bus.ppu != nil {
+            bus.ppu.win1h = value
+        }
+    case IO_WIN0V:
+        if bus.ppu != nil {
+            bus.ppu.win0v = value
+        }
+    case IO_WIN1V:
+        if bus.ppu != nil {
+            bus.ppu.win1v = value
+        }
+    case IO_WININ:
+        if bus.ppu != nil {
+            bus.ppu.winin = value
+        }
+    case IO_WINOUT:
+        if bus.ppu != nil {
+            bus.ppu.winout = value
+        }
+    case IO_MOSAIC:
+        if bus.ppu != nil {
+            bus.ppu.mosaic = value
+        }
+    case IO_BLDCNT:
+        if bus.ppu != nil {
+            bus.ppu.bldcnt = value
+        }
+    case IO_BLDALPHA:
+        if bus.ppu != nil {
+            bus.ppu.bldalpha = value
+        }
+    case IO_BLDY:
+        if bus.ppu != nil {
+            bus.ppu.bldy = value
+        }
+
+    // Interrupt registers
     case IO_IE:
         bus.ie = value
     case IO_IF:
@@ -253,8 +483,7 @@ write_io16 :: proc(bus: ^Bus, addr: u32, value: u16) -> (cycles: u8) {
     case IO_HALTCNT:
         bus.halt_requested = true
     case:
-        // Stub for PPU/APU/DMA/Timer registers
-        // Just store in I/O memory for now
+        // Stub for other registers - store in I/O memory
         if offset < 0x400 && bus.io != nil {
             bus.io[offset] = u8(value)
             bus.io[offset + 1] = u8(value >> 8)
@@ -270,6 +499,45 @@ write_io32 :: proc(bus: ^Bus, addr: u32, value: u32) -> (cycles: u8) {
     offset := addr & 0x3FC
 
     switch offset {
+    // PPU 32-bit registers
+    case IO_BG2X:
+        if bus.ppu != nil {
+            // Sign extend 28-bit to 32-bit
+            v := i32(value)
+            if (value & 0x08000000) != 0 {
+                v |= i32(0xF0000000)
+            }
+            bus.ppu.bg2x = v
+            bus.ppu.bg2x_ref = v
+        }
+    case IO_BG2Y:
+        if bus.ppu != nil {
+            v := i32(value)
+            if (value & 0x08000000) != 0 {
+                v |= i32(0xF0000000)
+            }
+            bus.ppu.bg2y = v
+            bus.ppu.bg2y_ref = v
+        }
+    case IO_BG3X:
+        if bus.ppu != nil {
+            v := i32(value)
+            if (value & 0x08000000) != 0 {
+                v |= i32(0xF0000000)
+            }
+            bus.ppu.bg3x = v
+            bus.ppu.bg3x_ref = v
+        }
+    case IO_BG3Y:
+        if bus.ppu != nil {
+            v := i32(value)
+            if (value & 0x08000000) != 0 {
+                v |= i32(0xF0000000)
+            }
+            bus.ppu.bg3y = v
+            bus.ppu.bg3y_ref = v
+        }
+
     case IO_IE:
         bus.ie = u16(value)
         // IF is at +2, write 1 to clear

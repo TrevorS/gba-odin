@@ -5,6 +5,13 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "cpu"
+import "ppu"
+import "vendor:sdl2"
+
+// Display scaling
+DISPLAY_SCALE :: 2
+WINDOW_WIDTH :: ppu.SCREEN_WIDTH * DISPLAY_SCALE
+WINDOW_HEIGHT :: ppu.SCREEN_HEIGHT * DISPLAY_SCALE
 
 // Command line options
 Options :: struct {
@@ -168,6 +175,119 @@ parse_args :: proc() -> (options: Options, ok: bool) {
     return
 }
 
+// SDL2 display state
+Display :: struct {
+    window:   ^sdl2.Window,
+    renderer: ^sdl2.Renderer,
+    texture:  ^sdl2.Texture,
+}
+
+// Initialize SDL2 display
+display_init :: proc(title: cstring) -> (display: Display, ok: bool) {
+    if sdl2.Init({.VIDEO}) != 0 {
+        fmt.eprintln("Error: Failed to initialize SDL2:", sdl2.GetError())
+        return {}, false
+    }
+
+    display.window = sdl2.CreateWindow(
+        title,
+        sdl2.WINDOWPOS_CENTERED,
+        sdl2.WINDOWPOS_CENTERED,
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        {.SHOWN, .RESIZABLE},
+    )
+    if display.window == nil {
+        fmt.eprintln("Error: Failed to create window:", sdl2.GetError())
+        sdl2.Quit()
+        return {}, false
+    }
+
+    display.renderer = sdl2.CreateRenderer(display.window, -1, {.ACCELERATED, .PRESENTVSYNC})
+    if display.renderer == nil {
+        fmt.eprintln("Error: Failed to create renderer:", sdl2.GetError())
+        sdl2.DestroyWindow(display.window)
+        sdl2.Quit()
+        return {}, false
+    }
+
+    // Set logical size for scaling
+    sdl2.RenderSetLogicalSize(display.renderer, ppu.SCREEN_WIDTH, ppu.SCREEN_HEIGHT)
+
+    // Create texture for framebuffer (BGR555 format)
+    display.texture = sdl2.CreateTexture(
+        display.renderer,
+        .BGR555,
+        .STREAMING,
+        ppu.SCREEN_WIDTH,
+        ppu.SCREEN_HEIGHT,
+    )
+    if display.texture == nil {
+        fmt.eprintln("Error: Failed to create texture:", sdl2.GetError())
+        sdl2.DestroyRenderer(display.renderer)
+        sdl2.DestroyWindow(display.window)
+        sdl2.Quit()
+        return {}, false
+    }
+
+    ok = true
+    return
+}
+
+// Destroy SDL2 display
+display_destroy :: proc(display: ^Display) {
+    if display.texture != nil {
+        sdl2.DestroyTexture(display.texture)
+    }
+    if display.renderer != nil {
+        sdl2.DestroyRenderer(display.renderer)
+    }
+    if display.window != nil {
+        sdl2.DestroyWindow(display.window)
+    }
+    sdl2.Quit()
+}
+
+// Update display with framebuffer
+display_update :: proc(display: ^Display, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16) {
+    // Update texture with framebuffer data
+    sdl2.UpdateTexture(
+        display.texture,
+        nil,
+        framebuffer,
+        ppu.SCREEN_WIDTH * 2, // pitch in bytes
+    )
+
+    // Clear and render
+    sdl2.RenderClear(display.renderer)
+    sdl2.RenderCopy(display.renderer, display.texture, nil, nil)
+    sdl2.RenderPresent(display.renderer)
+}
+
+// Poll SDL2 events, returns false if quit requested
+display_poll_events :: proc() -> bool {
+    event: sdl2.Event
+    for sdl2.PollEvent(&event) {
+        #partial switch event.type {
+        case .QUIT:
+            return false
+        case .KEYDOWN:
+            #partial switch event.key.keysym.sym {
+            case .ESCAPE:
+                return false
+            }
+        }
+    }
+    return true
+}
+
+// Update window title with FPS
+display_set_title :: proc(display: ^Display, fps: f64) {
+    title: [128]u8
+    fmt.bprintf(title[:], "gba-odin - %.1f FPS\x00", fps)
+    sdl2.SetWindowTitle(display.window, cstring(&title[0]))
+}
+
 main :: proc() {
     fmt.println("gba-odin - Game Boy Advance Emulator")
     fmt.println()
@@ -204,6 +324,18 @@ main :: proc() {
     fmt.println("ROM loaded successfully")
     fmt.println()
 
+    // Initialize display if not headless
+    display: Display
+    if !options.headless {
+        display, ok = display_init("gba-odin")
+        if !ok {
+            fmt.eprintln("Warning: Failed to initialize display, running headless")
+            options.headless = true
+        } else {
+            defer display_destroy(&display)
+        }
+    }
+
     // Run emulation
     fmt.println("Starting emulation...")
     if options.headless {
@@ -212,11 +344,27 @@ main :: proc() {
 
     frame_count := 0
     start_time := time.now()
+    last_fps_time := start_time
+    fps_frame_count := 0
 
     for gba.running {
+        // Poll events if not headless
+        if !options.headless {
+            if !display_poll_events() {
+                break
+            }
+        }
+
         // Run one frame
         gba_run_frame(&gba)
         frame_count += 1
+        fps_frame_count += 1
+
+        // Update display if not headless
+        if !options.headless {
+            framebuffer := gba_get_framebuffer(&gba)
+            display_update(&display, framebuffer)
+        }
 
         // Check breakpoint
         if bp, has_bp := options.breakpoint.?; has_bp {
@@ -233,11 +381,19 @@ main :: proc() {
             break
         }
 
-        // Print status periodically
-        if frame_count % 60 == 0 {
-            elapsed := time.duration_seconds(time.since(start_time))
-            fps := f64(frame_count) / elapsed
-            fmt.printf("\rFrame %d (%.1f FPS)", frame_count, fps)
+        // Update FPS display periodically
+        now := time.now()
+        fps_elapsed := time.duration_seconds(time.diff(last_fps_time, now))
+        if fps_elapsed >= 1.0 {
+            fps := f64(fps_frame_count) / fps_elapsed
+            if !options.headless {
+                display_set_title(&display, fps)
+            }
+            if options.headless && frame_count % 60 == 0 {
+                fmt.printf("\rFrame %d (%.1f FPS)", frame_count, fps)
+            }
+            last_fps_time = now
+            fps_frame_count = 0
         }
     }
 

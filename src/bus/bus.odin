@@ -1,6 +1,7 @@
 package bus
 
 import "core:fmt"
+import "../ppu"
 
 // Memory region size constants
 BIOS_SIZE :: 16_384
@@ -24,6 +25,9 @@ Bus :: struct {
     io:      []u8,
     rom:     []u8,
     sram:    []u8,
+
+    // PPU pointer for register access
+    ppu: ^ppu.PPU,
 
     // BIOS protection
     last_bios_read: u32,
@@ -87,6 +91,11 @@ bus_init :: proc(bus: ^Bus, bios, ewram, iwram, palette, vram, oam, io, rom, sra
 // Set PC pointer for BIOS protection
 bus_set_pc_ptr :: proc(bus: ^Bus, pc: ^u32) {
     bus.pc = pc
+}
+
+// Set PPU pointer for register access
+bus_set_ppu :: proc(bus: ^Bus, p: ^ppu.PPU) {
+    bus.ppu = p
 }
 
 // Region identification from address

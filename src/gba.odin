@@ -3,12 +3,14 @@ package main
 import "core:fmt"
 import "cpu"
 import "bus"
+import "ppu"
 
 // Top-level GBA system structure
 GBA :: struct {
     // Core components
     cpu:       cpu.CPU,
     bus:       bus.Bus,
+    ppu:       ppu.PPU,
     scheduler: Scheduler,
     memory:    Memory,
 
@@ -36,6 +38,10 @@ gba_init :: proc(gba: ^GBA) -> bool {
     // Initialize CPU
     cpu.cpu_init(&gba.cpu)
 
+    // Initialize PPU
+    ppu.ppu_init(&gba.ppu)
+    ppu.ppu_set_memory(&gba.ppu, gba.memory.vram, gba.memory.palette, gba.memory.oam)
+
     // Initialize bus with memory regions
     bus.bus_init(
         &gba.bus,
@@ -52,6 +58,9 @@ gba_init :: proc(gba: ^GBA) -> bool {
 
     // Link bus to CPU's PC for BIOS protection
     bus.bus_set_pc_ptr(&gba.bus, &gba.cpu.regs[15])
+
+    // Link bus to PPU for register access
+    bus.bus_set_ppu(&gba.bus, &gba.ppu)
 
     // Initialize scheduler
     scheduler_init(&gba.scheduler)
@@ -114,6 +123,10 @@ gba_load_rom :: proc(gba: ^GBA, path: string) -> bool {
 gba_reset :: proc(gba: ^GBA) {
     // Reset CPU
     cpu.cpu_init(&gba.cpu)
+
+    // Reset PPU
+    ppu.ppu_init(&gba.ppu)
+    ppu.ppu_set_memory(&gba.ppu, gba.memory.vram, gba.memory.palette, gba.memory.oam)
 
     // Reset memory (but keep BIOS and ROM)
     memory_reset(&gba.memory)
@@ -203,32 +216,59 @@ gba_run_frame :: proc(gba: ^GBA) {
     }
 }
 
+// Interrupt bit constants
+IRQ_VBLANK :: 0x0001
+IRQ_HBLANK :: 0x0002
+IRQ_VCOUNT :: 0x0004
+
 // Handle scheduler event
 handle_event :: proc(gba: ^GBA, event: Event) {
     #partial switch event.type {
     case .HBlank_Start:
-        // TODO: Trigger HBlank processing in PPU
-        // Request HBlank interrupt if enabled
-        // bus.bus_request_interrupt(&gba.bus, 0x0002) // HBlank interrupt
+        // Render the current scanline before HBlank
+        ppu.ppu_render_scanline(&gba.ppu)
 
-        // Schedule end of HBlank
+        // Set HBlank flag
+        hblank_irq := ppu.ppu_hblank(&gba.ppu)
+        if hblank_irq {
+            bus.bus_request_interrupt(&gba.bus, IRQ_HBLANK)
+        }
+
+        // Schedule end of HBlank (end of scanline)
         scheduler_schedule(&gba.scheduler, .HBlank_End, CYCLES_PER_SCANLINE - HBLANK_START_CYCLE)
 
     case .HBlank_End:
-        // Schedule next HBlank start
+        // End of HBlank, advance to next scanline
+        vblank_irq, vcount_irq := ppu.ppu_end_hblank(&gba.ppu)
+
+        if vblank_irq {
+            bus.bus_request_interrupt(&gba.bus, IRQ_VBLANK)
+        }
+        if vcount_irq {
+            bus.bus_request_interrupt(&gba.bus, IRQ_VCOUNT)
+        }
+
+        // Check if frame is complete
+        if ppu.ppu_frame_complete(&gba.ppu) {
+            // We're now in VBlank, schedule frame complete at end of VBlank
+            scheduler_schedule(&gba.scheduler, .Frame_Complete, CYCLES_PER_SCANLINE * VBLANK_SCANLINES)
+        }
+
+        // Schedule next HBlank
         scheduler_schedule(&gba.scheduler, .HBlank_Start, HBLANK_START_CYCLE)
 
     case .Frame_Complete:
         gba.frame_complete = true
-        // Schedule next frame
-        scheduler_schedule(&gba.scheduler, .Frame_Complete, CYCLES_PER_FRAME)
-
-        // TODO: Request VBlank interrupt
-        // bus.bus_request_interrupt(&gba.bus, 0x0001) // VBlank interrupt
+        // Frame complete event is one-shot per frame, next one scheduled at VBlank
 
     case:
-        // Other events not implemented in Phase 1
+        // Other events not implemented yet
     }
+}
+
+// Get framebuffer for display
+gba_get_framebuffer :: proc(gba: ^GBA) -> ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16 {
+    return ppu.ppu_get_framebuffer(&gba.ppu)
 }
 
 // Shutdown GBA

@@ -6,14 +6,14 @@ import "core:strings"
 import "core:time"
 import "cpu"
 import "ppu"
+import "gb"
+import gb_ppu "gb/ppu"
 
 // Headless mode flag - set via build define
 HEADLESS_ONLY :: #config(HEADLESS_ONLY, true)
 
 // Display scaling
 DISPLAY_SCALE :: 2
-WINDOW_WIDTH :: ppu.SCREEN_WIDTH * DISPLAY_SCALE
-WINDOW_HEIGHT :: ppu.SCREEN_HEIGHT * DISPLAY_SCALE
 
 // Command line options
 Options :: struct {
@@ -27,18 +27,20 @@ Options :: struct {
     screenshot:    string, // Path to save screenshot
     skip_bios:     bool, // Skip BIOS and start at ROM
     trace_cpu:     bool, // Print CPU trace to console
+    force_system:  System_Type, // Force system type (auto-detect if .Unknown)
 }
 
 print_usage :: proc() {
-    fmt.println("gba-odin - Game Boy Advance Emulator")
+    fmt.println("gba-odin - Game Boy / Game Boy Advance Emulator")
     fmt.println()
-    fmt.println("Usage: gba-odin <rom_path> --bios <bios_path> [options]")
+    fmt.println("Usage: gba-odin <rom_path> [options]")
     fmt.println()
-    fmt.println("Required:")
-    fmt.println("  <rom_path>          Path to ROM file (.gba)")
-    fmt.println("  --bios <path>       Path to GBA BIOS file (16KB)")
+    fmt.println("Arguments:")
+    fmt.println("  <rom_path>          Path to ROM file (.gb, .gbc, .gba)")
     fmt.println()
     fmt.println("Options:")
+    fmt.println("  --bios <path>       Path to BIOS file (required for GBA, optional for GB)")
+    fmt.println("  --system <type>     Force system type (gb, gbc, gba)")
     fmt.println("  --log-level <level> Set log level (none, error, warn, info, debug, trace)")
     fmt.println("  --trace <path>      Write instruction trace to file")
     fmt.println("  --break <address>   Set breakpoint at address (hex)")
@@ -162,6 +164,23 @@ parse_args :: proc() -> (options: Options, ok: bool) {
             options.skip_bios = true
         } else if arg == "--trace-cpu" {
             options.trace_cpu = true
+        } else if arg == "--system" {
+            i += 1
+            if i >= len(args) {
+                fmt.eprintln("Error: --system requires a type argument (gb, gbc, gba)")
+                return {}, false
+            }
+            switch args[i] {
+            case "gb":
+                options.force_system = .GB
+            case "gbc":
+                options.force_system = .GBC
+            case "gba":
+                options.force_system = .GBA
+            case:
+                fmt.eprintln("Error: Unknown system type:", args[i])
+                return {}, false
+            }
         } else if !strings.has_prefix(arg, "-") {
             if options.rom_path == "" {
                 options.rom_path = arg
@@ -184,11 +203,7 @@ parse_args :: proc() -> (options: Options, ok: bool) {
         return {}, false
     }
 
-    if options.bios_path == "" {
-        fmt.eprintln("Error: BIOS path is required (use --bios)")
-        print_usage()
-        return {}, false
-    }
+    // BIOS is only required for GBA (we'll validate after detecting system)
 
     ok = true
     return
@@ -405,13 +420,224 @@ save_screenshot_png :: proc(path: string, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.
     return true
 }
 
+// Save GB framebuffer as PPM image
+save_screenshot_gb :: proc(path: string, framebuffer: ^[gb_ppu.SCREEN_HEIGHT][gb_ppu.SCREEN_WIDTH]u16) -> bool {
+    file, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0o644)
+    if err != os.ERROR_NONE {
+        fmt.eprintln("Error: Failed to create screenshot file:", path)
+        return false
+    }
+    defer os.close(file)
+
+    header := fmt.tprintf("P6\n%d %d\n255\n", gb_ppu.SCREEN_WIDTH, gb_ppu.SCREEN_HEIGHT)
+    os.write_string(file, header)
+
+    pixel_data: [gb_ppu.SCREEN_WIDTH * 3]u8
+    for y in 0 ..< gb_ppu.SCREEN_HEIGHT {
+        for x in 0 ..< gb_ppu.SCREEN_WIDTH {
+            rgb555 := framebuffer[y][x]
+            r := u8((rgb555 >> 0) & 0x1F)
+            g := u8((rgb555 >> 5) & 0x1F)
+            b := u8((rgb555 >> 10) & 0x1F)
+            pixel_data[x * 3 + 0] = (r << 3) | (r >> 2)
+            pixel_data[x * 3 + 1] = (g << 3) | (g >> 2)
+            pixel_data[x * 3 + 2] = (b << 3) | (b >> 2)
+        }
+        os.write(file, pixel_data[:])
+    }
+
+    fmt.println("Screenshot saved to:", path)
+    return true
+}
+
+// Save GB framebuffer as PNG image
+save_screenshot_png_gb :: proc(path: string, framebuffer: ^[gb_ppu.SCREEN_HEIGHT][gb_ppu.SCREEN_WIDTH]u16) -> bool {
+    file, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0o644)
+    if err != os.ERROR_NONE {
+        fmt.eprintln("Error: Failed to create screenshot file:", path)
+        return false
+    }
+    defer os.close(file)
+
+    png_sig: [8]u8 = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
+    os.write(file, png_sig[:])
+
+    width := u32(gb_ppu.SCREEN_WIDTH)
+    height := u32(gb_ppu.SCREEN_HEIGHT)
+    ihdr: [13]u8 = {
+        u8(width >> 24), u8(width >> 16), u8(width >> 8), u8(width),
+        u8(height >> 24), u8(height >> 16), u8(height >> 8), u8(height),
+        8, 2, 0, 0, 0,
+    }
+    write_png_chunk(file, {'I', 'H', 'D', 'R'}, ihdr[:])
+
+    row_size := 1 + gb_ppu.SCREEN_WIDTH * 3
+    raw_size := gb_ppu.SCREEN_HEIGHT * row_size
+    raw_data := make([]u8, raw_size)
+    defer delete(raw_data)
+
+    idx := 0
+    for y in 0..<gb_ppu.SCREEN_HEIGHT {
+        raw_data[idx] = 0
+        idx += 1
+        for x in 0..<gb_ppu.SCREEN_WIDTH {
+            rgb555 := framebuffer[y][x]
+            r := u8((rgb555 >> 0) & 0x1F)
+            g := u8((rgb555 >> 5) & 0x1F)
+            b := u8((rgb555 >> 10) & 0x1F)
+            raw_data[idx] = (r << 3) | (r >> 2)
+            raw_data[idx+1] = (g << 3) | (g >> 2)
+            raw_data[idx+2] = (b << 3) | (b >> 2)
+            idx += 3
+        }
+    }
+
+    MAX_BLOCK :: 65535
+    num_blocks := (raw_size + MAX_BLOCK - 1) / MAX_BLOCK
+    zlib_size := 2 + num_blocks * 5 + raw_size + 4
+    zlib_data := make([]u8, zlib_size)
+    defer delete(zlib_data)
+
+    zlib_data[0] = 0x78
+    zlib_data[1] = 0x01
+
+    zidx := 2
+    remaining := raw_size
+    src_idx := 0
+    for block := 0; block < num_blocks; block += 1 {
+        block_size := min(remaining, MAX_BLOCK)
+        is_final := block == num_blocks - 1
+        zlib_data[zidx] = is_final ? 0x01 : 0x00
+        zidx += 1
+        len16 := u16(block_size)
+        zlib_data[zidx] = u8(len16 & 0xFF)
+        zlib_data[zidx+1] = u8(len16 >> 8)
+        zlib_data[zidx+2] = u8(~len16 & 0xFF)
+        zlib_data[zidx+3] = u8((~len16) >> 8)
+        zidx += 4
+        for i in 0..<block_size {
+            zlib_data[zidx+i] = raw_data[src_idx+i]
+        }
+        zidx += block_size
+        src_idx += block_size
+        remaining -= block_size
+    }
+
+    adler := adler32(raw_data)
+    zlib_data[zidx] = u8(adler >> 24)
+    zlib_data[zidx+1] = u8(adler >> 16)
+    zlib_data[zidx+2] = u8(adler >> 8)
+    zlib_data[zidx+3] = u8(adler)
+
+    write_png_chunk(file, {'I', 'D', 'A', 'T'}, zlib_data[:])
+
+    empty: []u8
+    write_png_chunk(file, {'I', 'E', 'N', 'D'}, empty)
+
+    fmt.println("Screenshot saved to:", path)
+    return true
+}
+
 main :: proc() {
-    fmt.println("gba-odin - Game Boy Advance Emulator")
+    fmt.println("gba-odin - Game Boy / Game Boy Advance Emulator")
     fmt.println()
 
     // Parse command line arguments
     options, ok := parse_args()
     if !ok {
+        os.exit(1)
+    }
+
+    // Load ROM data to detect system type
+    rom_data, rom_ok := os.read_entire_file(options.rom_path)
+    if !rom_ok {
+        fmt.eprintln("Error: Failed to read ROM file:", options.rom_path)
+        os.exit(1)
+    }
+    defer delete(rom_data)
+
+    // Detect or use forced system type
+    system := options.force_system
+    if system == .Unknown {
+        system = detect_system(rom_data)
+    }
+
+    if system == .Unknown {
+        fmt.eprintln("Error: Could not detect system type. Use --system to specify.")
+        os.exit(1)
+    }
+
+    fmt.println("System:", system_name(system))
+    fmt.println("ROM:", options.rom_path)
+
+    // Run appropriate emulator
+    switch system {
+    case .GB, .GBC:
+        run_gameboy(options, rom_data, system == .GBC)
+    case .GBA:
+        run_gba(options)
+    case .Unknown:
+        // Already handled above
+    }
+}
+
+// Run Game Boy emulator
+run_gameboy :: proc(options: Options, rom_data: []u8, is_cgb: bool) {
+    gameboy: gb.GameBoy
+    if !gb.gb_init(&gameboy, rom_data, is_cgb) {
+        fmt.eprintln("Error: Failed to initialize Game Boy")
+        os.exit(1)
+    }
+    defer gb.gb_destroy(&gameboy)
+
+    title := gb.get_rom_title(rom_data)
+    fmt.println("Title:", title)
+    fmt.println()
+
+    // Force headless mode (SDL not implemented for GB yet)
+    options := options  // Make mutable copy
+    options.headless = true
+
+    fmt.println("Starting emulation...")
+    fmt.println("Running in headless mode")
+
+    frame_count := 0
+    start_time := time.now()
+
+    for frame_count < options.max_frames || options.max_frames == 0 {
+        // Run one frame
+        gb.run_frame(&gameboy)
+        frame_count += 1
+
+        // Check frame limit
+        if options.max_frames > 0 && frame_count >= options.max_frames {
+            fmt.printf("\nReached frame limit (%d frames)\n", frame_count)
+            break
+        }
+    }
+
+    // Save screenshot if requested
+    if options.screenshot != "" {
+        framebuffer := gb.get_framebuffer(&gameboy)
+        if strings.has_suffix(options.screenshot, ".png") {
+            save_screenshot_png_gb(options.screenshot, framebuffer)
+        } else {
+            save_screenshot_gb(options.screenshot, framebuffer)
+        }
+    }
+
+    // Final stats
+    elapsed := time.duration_seconds(time.since(start_time))
+    fps := f64(frame_count) / elapsed
+    fmt.printf("\n\nEmulation complete: %d frames in %.2f seconds (%.1f FPS)\n",
+        frame_count, elapsed, fps)
+}
+
+// Run GBA emulator
+run_gba :: proc(options: Options) {
+    // GBA requires BIOS
+    if options.bios_path == "" {
+        fmt.eprintln("Error: BIOS path is required for GBA (use --bios)")
         os.exit(1)
     }
 
@@ -456,22 +682,23 @@ main :: proc() {
 
     // Initialize display if not headless
     display: Display
-    if !options.headless && !HEADLESS_ONLY {
-        display, ok = display_init("gba-odin")
+    headless := options.headless
+    if !headless && !HEADLESS_ONLY {
+        display, ok := display_init("gba-odin")
         if !ok {
             fmt.eprintln("Warning: Failed to initialize display, running headless")
-            options.headless = true
+            headless = true
         } else {
             defer display_destroy(&display)
         }
     } else {
         // Force headless mode when built without SDL2
-        options.headless = true
+        headless = true
     }
 
     // Run emulation
     fmt.println("Starting emulation...")
-    if options.headless {
+    if headless {
         fmt.println("Running in headless mode")
     }
 
@@ -482,7 +709,7 @@ main :: proc() {
 
     for gba.running {
         // Poll events if not headless
-        if !options.headless {
+        if !headless {
             if !display_poll_events() {
                 break
             }
@@ -494,7 +721,7 @@ main :: proc() {
         fps_frame_count += 1
 
         // Update display if not headless
-        if !options.headless {
+        if !headless {
             framebuffer := gba_get_framebuffer(&gba)
             display_update(&display, framebuffer)
         }
@@ -520,10 +747,10 @@ main :: proc() {
         fps_elapsed := time.duration_seconds(time.diff(last_fps_time, now))
         if fps_elapsed >= 1.0 {
             fps := f64(fps_frame_count) / fps_elapsed
-            if !options.headless {
+            if !headless {
                 display_set_title(&display, fps)
             }
-            if options.headless && frame_count % 60 == 0 {
+            if headless && frame_count % 60 == 0 {
                 fmt.printf("\rFrame %d (%.1f FPS)", frame_count, fps)
             }
             last_fps_time = now

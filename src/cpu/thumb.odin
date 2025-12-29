@@ -1,6 +1,10 @@
 package cpu
 
 import "../bus"
+import "core:fmt"
+
+// Debug flag for tracing load/store operations (enable for debugging)
+thumb_debug_ldst := false
 
 // Thumb instruction handler type
 Thumb_Handler :: #type proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16)
@@ -553,8 +557,16 @@ thumb_ldr_str_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
     case 0b000: // STR
         cycles = bus.write32(mem_bus, addr, get_reg(cpu, rd))
     case 0b001: // STRH
+        if thumb_debug_ldst {
+            fmt.printf("  STRH: rd=%d rb=%d ro=%d addr=%08X val=%04X\n",
+                rd, rb, ro, addr, u16(get_reg(cpu, rd)))
+        }
         cycles = bus.write16(mem_bus, addr, u16(get_reg(cpu, rd)))
     case 0b010: // STRB
+        if thumb_debug_ldst {
+            fmt.printf("  STRB: rd=%d rb=%d ro=%d addr=%08X val=%02X\n",
+                rd, rb, ro, addr, u8(get_reg(cpu, rd)))
+        }
         cycles = bus.write8(mem_bus, addr, u8(get_reg(cpu, rd)))
     case 0b011: // LDRSB
         val, c := bus.read8(mem_bus, addr)
@@ -562,6 +574,10 @@ thumb_ldr_str_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
         result: u32 = u32(val)
         if (val & 0x80) != 0 {
             result |= 0xFFFFFF00
+        }
+        if thumb_debug_ldst {
+            fmt.printf("  LDRSB: rd=%d rb=%d ro=%d addr=%08X val=%02X result=%08X\n",
+                rd, rb, ro, addr, val, result)
         }
         set_reg(cpu, rd, result)
     case 0b100: // LDR
@@ -582,6 +598,10 @@ thumb_ldr_str_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
         result: u32 = u32(val)
         if (val & 0x8000) != 0 {
             result |= 0xFFFF0000
+        }
+        if thumb_debug_ldst {
+            fmt.printf("  LDRSH: rd=%d rb=%d ro=%d addr=%08X val=%04X result=%08X\n",
+                rd, rb, ro, addr, val, result)
         }
         set_reg(cpu, rd, result)
     }
@@ -624,6 +644,10 @@ thumb_ldr_str_imm :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
     } else {
         value := get_reg(cpu, rd)
         if is_byte {
+            if thumb_debug_ldst {
+                fmt.printf("  STRB(imm): rd=%d rb=%d offset=%d addr=%08X val=%02X\n",
+                    rd, rb, offset, addr, u8(value))
+            }
             cycles = bus.write8(mem_bus, addr, u8(value))
         } else {
             cycles = bus.write32(mem_bus, addr, value)

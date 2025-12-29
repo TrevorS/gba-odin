@@ -1,6 +1,10 @@
 package cpu
 
 import "../bus"
+import "core:fmt"
+
+// Debug flag for ARM load/store (enable for debugging)
+arm_debug_ldst := false
 
 // ARM instruction handler type
 ARM_Handler :: #type proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32)
@@ -696,6 +700,10 @@ arm_single_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
             value += 4
         }
         if is_byte {
+            if arm_debug_ldst {
+                fmt.printf("  ARM STRB: rd=%d rn=%d addr=%08X val=%02X\n",
+                    rd, rn, addr, u8(value))
+            }
             cycles = bus.write8(mem_bus, addr, u8(value))
         } else {
             cycles = bus.write32(mem_bus, addr, value)
@@ -767,6 +775,10 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
             val, c := bus.read16(mem_bus, addr)
             value = u32(val)
             cycles = c
+            if arm_debug_ldst {
+                fmt.printf("  ARM LDRH: rd=%d rn=%d addr=%08X val=%04X\n",
+                    rd, rn, addr, val)
+            }
         case 0b10: // LDRSB
             val, c := bus.read8(mem_bus, addr)
             // Sign extend
@@ -776,6 +788,10 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
                 value = u32(val)
             }
             cycles = c
+            if arm_debug_ldst {
+                fmt.printf("  ARM LDRSB: rd=%d rn=%d addr=%08X val=%02X result=%08X\n",
+                    rd, rn, addr, val, value)
+            }
         case 0b11: // LDRSH
             val, c := bus.read16(mem_bus, addr)
             // Sign extend
@@ -785,11 +801,19 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
                 value = u32(val)
             }
             cycles = c
+            if arm_debug_ldst {
+                fmt.printf("  ARM LDRSH: rd=%d rn=%d addr=%08X val=%04X result=%08X\n",
+                    rd, rn, addr, val, value)
+            }
         }
         set_reg(cpu, rd, value)
     } else {
         // Store halfword
         value := get_reg(cpu, rd)
+        if arm_debug_ldst {
+            fmt.printf("  ARM STRH: rd=%d rn=%d addr=%08X val=%04X\n",
+                rd, rn, addr, u16(value))
+        }
         cycles = bus.write16(mem_bus, addr, u16(value))
     }
 

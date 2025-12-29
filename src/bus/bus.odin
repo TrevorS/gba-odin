@@ -535,3 +535,13 @@ write32 :: proc(bus: ^Bus, addr: u32, value: u32) -> (cycles: u8) {
 bus_update_prefetch :: proc(bus: ^Bus, value: u32) {
     bus.last_prefetch = value
 }
+
+// Get IE register
+bus_get_ie :: proc(bus: ^Bus) -> u16 {
+    return bus.ie
+}
+
+// Set IE register
+bus_set_ie :: proc(bus: ^Bus, value: u16) {
+    bus.ie = value
+}

@@ -48,6 +48,9 @@ decode_arm_instruction :: proc "contextless" (bits_27_20: u32, bits_7_4: u32) ->
         } else if (bits_7_4 & 0x9) == 0x9 {
             // Halfword/signed byte transfer
             return arm_halfword_transfer
+        } else if bits_27_20 == 0x12 && bits_7_4 == 0x1 {
+            // BX instruction (special encoding that looks like PSR transfer)
+            return arm_bx
         } else if (bits_7_4 & 0x1) == 0 || (bits_24_20 & 0x19) != 0x10 {
             // Data processing (register)
             return arm_data_processing
@@ -134,6 +137,16 @@ arm_undefined :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
 
 // Software interrupt
 arm_swi :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
+    // SWI number is in bits 0-23, but GBA uses bits 16-23
+    swi_num := u8((opcode >> 16) & 0xFF)
+
+    // Try HLE first
+    if swi_hle(cpu, mem_bus, swi_num) {
+        cpu.cycles = 3
+        return
+    }
+
+    // Fall back to BIOS
     swi(cpu)
     cpu.cycles = 3
 }
@@ -332,11 +345,7 @@ get_operand2 :: proc(cpu: ^CPU, opcode: u32, update_carry: bool) -> (value: u32,
 
 // Data processing instruction
 arm_data_processing :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
-    // Check for BX encoding (special case)
-    if (opcode & 0x0FFFFFF0) == 0x012FFF10 {
-        arm_bx(cpu, mem_bus, opcode)
-        return
-    }
+    // Note: BX is now handled directly in the LUT
 
     op := (opcode >> 21) & 0xF
     s := (opcode & (1 << 20)) != 0

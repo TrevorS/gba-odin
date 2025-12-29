@@ -15,13 +15,16 @@ WINDOW_HEIGHT :: ppu.SCREEN_HEIGHT * DISPLAY_SCALE
 
 // Command line options
 Options :: struct {
-    rom_path:   string,
-    bios_path:  string,
-    log_level:  Log_Level,
-    trace_path: string,
-    breakpoint: Maybe(u32),
-    headless:   bool,
-    max_frames: int, // 0 = unlimited
+    rom_path:      string,
+    bios_path:     string,
+    log_level:     Log_Level,
+    trace_path:    string,
+    breakpoint:    Maybe(u32),
+    headless:      bool,
+    max_frames:    int, // 0 = unlimited
+    screenshot:    string, // Path to save screenshot
+    skip_bios:     bool, // Skip BIOS and start at ROM
+    trace_cpu:     bool, // Print CPU trace to console
 }
 
 print_usage :: proc() {
@@ -39,6 +42,9 @@ print_usage :: proc() {
     fmt.println("  --break <address>   Set breakpoint at address (hex)")
     fmt.println("  --headless          Run without display (for testing)")
     fmt.println("  --frames <n>        Run for n frames then exit (for testing)")
+    fmt.println("  --screenshot <path> Save screenshot as PPM image")
+    fmt.println("  --skip-bios         Skip BIOS and start directly at ROM")
+    fmt.println("  --trace-cpu         Print first 50 instructions to console")
     fmt.println("  --help              Show this help message")
 }
 
@@ -143,6 +149,17 @@ parse_args :: proc() -> (options: Options, ok: bool) {
                 }
             }
             options.max_frames = frames
+        } else if arg == "--screenshot" {
+            i += 1
+            if i >= len(args) {
+                fmt.eprintln("Error: --screenshot requires a path argument")
+                return {}, false
+            }
+            options.screenshot = args[i]
+        } else if arg == "--skip-bios" {
+            options.skip_bios = true
+        } else if arg == "--trace-cpu" {
+            options.trace_cpu = true
         } else if !strings.has_prefix(arg, "-") {
             if options.rom_path == "" {
                 options.rom_path = arg
@@ -288,6 +305,41 @@ display_set_title :: proc(display: ^Display, fps: f64) {
     sdl2.SetWindowTitle(display.window, cstring(&title[0]))
 }
 
+// Save framebuffer as PPM image (simple format, no external deps)
+save_screenshot :: proc(path: string, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16) -> bool {
+    // Open file for writing
+    file, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0o644)
+    if err != os.ERROR_NONE {
+        fmt.eprintln("Error: Failed to create screenshot file:", path)
+        return false
+    }
+    defer os.close(file)
+
+    // Write PPM header (P6 binary format)
+    header := fmt.tprintf("P6\n%d %d\n255\n", ppu.SCREEN_WIDTH, ppu.SCREEN_HEIGHT)
+    os.write_string(file, header)
+
+    // Convert BGR555 to RGB888 and write pixels
+    pixel_data: [ppu.SCREEN_WIDTH * 3]u8
+    for y in 0 ..< ppu.SCREEN_HEIGHT {
+        for x in 0 ..< ppu.SCREEN_WIDTH {
+            bgr555 := framebuffer[y][x]
+            // Extract 5-bit components and expand to 8-bit
+            b := u8((bgr555 >> 10) & 0x1F)
+            g := u8((bgr555 >> 5) & 0x1F)
+            r := u8(bgr555 & 0x1F)
+            // Expand 5-bit to 8-bit: (val << 3) | (val >> 2)
+            pixel_data[x * 3 + 0] = (r << 3) | (r >> 2)
+            pixel_data[x * 3 + 1] = (g << 3) | (g >> 2)
+            pixel_data[x * 3 + 2] = (b << 3) | (b >> 2)
+        }
+        os.write(file, pixel_data[:])
+    }
+
+    fmt.println("Screenshot saved to:", path)
+    return true
+}
+
 main :: proc() {
     fmt.println("gba-odin - Game Boy Advance Emulator")
     fmt.println()
@@ -322,6 +374,19 @@ main :: proc() {
         os.exit(1)
     }
     fmt.println("ROM loaded successfully")
+
+    // Skip BIOS if requested
+    if options.skip_bios {
+        cpu.cpu_skip_bios(&gba.cpu)
+        fmt.println("BIOS skipped - starting at ROM entry point")
+    }
+
+    // Enable CPU trace if requested
+    if options.trace_cpu {
+        gba.trace_enabled = true
+        gba.trace_count = 0
+        fmt.println("CPU trace enabled (first 50 instructions)")
+    }
     fmt.println()
 
     // Initialize display if not headless
@@ -378,6 +443,7 @@ main :: proc() {
         // Check frame limit
         if options.max_frames > 0 && frame_count >= options.max_frames {
             fmt.printf("\nReached frame limit (%d frames)\n", frame_count)
+            gba_debug_dump(&gba)
             break
         }
 
@@ -395,6 +461,12 @@ main :: proc() {
             last_fps_time = now
             fps_frame_count = 0
         }
+    }
+
+    // Save screenshot if requested
+    if options.screenshot != "" {
+        framebuffer := gba_get_framebuffer(&gba)
+        save_screenshot(options.screenshot, framebuffer)
     }
 
     // Final stats

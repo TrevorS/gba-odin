@@ -162,6 +162,38 @@ cpu_init :: proc(cpu: ^CPU) {
     cpu.cycles = 0
 }
 
+// Skip BIOS and initialize CPU to post-BIOS state
+// Sets up registers as if BIOS had completed normally
+cpu_skip_bios :: proc(cpu: ^CPU) {
+    // Clear all registers first
+    for i in 0 ..< NUM_REGISTERS {
+        cpu.regs[i] = 0
+    }
+
+    // Set stack pointers for various modes (post-BIOS values)
+    // These are stored at their banked register indices
+
+    // IRQ mode SP (index 27)
+    cpu.regs[27] = 0x03007FA0
+
+    // Supervisor mode SP (index 23)
+    cpu.regs[23] = 0x03007FE0
+
+    // User/System mode SP (index 13)
+    cpu.regs[13] = 0x03007F00
+
+    // Set CPSR: System mode, IRQ/FIQ enabled, ARM state
+    cpu.regs[31] = u32(Mode.System)
+
+    // PC starts at ROM entry point
+    cpu.regs[15] = 0x08000000
+
+    cpu.pipeline_valid = false
+    cpu.halted = false
+    cpu.last_fetched_opcode = 0
+    cpu.cycles = 0
+}
+
 // Get register value with banking
 get_reg :: proc(cpu: ^CPU, n: u4) -> u32 {
     idx := get_physical_reg_index(cpu, n)

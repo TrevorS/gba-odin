@@ -164,6 +164,16 @@ thumb_undefined :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
 
 // Software interrupt
 thumb_swi :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
+    // SWI number is in bits 0-7
+    swi_num := u8(opcode & 0xFF)
+
+    // Try HLE first
+    if swi_hle(cpu, mem_bus, swi_num) {
+        cpu.cycles = 3
+        return
+    }
+
+    // Fall back to BIOS
     swi(cpu)
     cpu.cycles = 3
 }

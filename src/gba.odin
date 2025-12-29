@@ -22,7 +22,9 @@ GBA :: struct {
     frame_complete: bool,
 
     // Debug
-    log_level: Log_Level,
+    log_level:     Log_Level,
+    trace_enabled: bool,
+    trace_count:   u32,
 }
 
 // Initialize GBA system
@@ -170,11 +172,28 @@ gba_step :: proc(gba: ^GBA) -> u32 {
 
     if cpu.is_thumb(&gba.cpu) {
         opcode, c := bus.read16(&gba.bus, pc)
+
+        // Debug trace
+        if gba.trace_enabled && gba.trace_count < 50 {
+            fmt.printf("[%d] THUMB PC=%08X op=%04X CPSR=%08X\n",
+                gba.trace_count, pc, opcode, gba.cpu.regs[31])
+            gba.trace_count += 1
+        }
+
         bus.bus_update_prefetch(&gba.bus, u32(opcode) | (u32(opcode) << 16))
         cpu.execute_thumb(&gba.cpu, &gba.bus, opcode)
         cycles = gba.cpu.cycles + u32(c)
     } else {
         opcode, c := bus.read32(&gba.bus, pc)
+
+        // Debug trace
+        if gba.trace_enabled && gba.trace_count < 50 {
+            fmt.printf("[%d] ARM   PC=%08X op=%08X CPSR=%08X R0=%08X R1=%08X LR=%08X\n",
+                gba.trace_count, pc, opcode, gba.cpu.regs[31],
+                gba.cpu.regs[0], gba.cpu.regs[1], gba.cpu.regs[14])
+            gba.trace_count += 1
+        }
+
         bus.bus_update_prefetch(&gba.bus, opcode)
         cpu.execute_arm(&gba.cpu, &gba.bus, opcode)
         cycles = gba.cpu.cycles + u32(c)
@@ -269,6 +288,26 @@ handle_event :: proc(gba: ^GBA, event: Event) {
 // Get framebuffer for display
 gba_get_framebuffer :: proc(gba: ^GBA) -> ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16 {
     return ppu.ppu_get_framebuffer(&gba.ppu)
+}
+
+// Debug dump of system state
+gba_debug_dump :: proc(gba: ^GBA) {
+    fmt.println("\n=== Debug State ===")
+    fmt.printf("PC: 0x%08X\n", gba.cpu.regs[15])
+    fmt.printf("CPSR: 0x%08X (Mode: %s, Thumb: %s)\n",
+        gba.cpu.regs[16],
+        cpu.is_thumb(&gba.cpu) ? "Thumb" : "ARM",
+        cpu.get_mode(&gba.cpu) == .User ? "User" : "Other")
+    fmt.printf("Halted: %s\n", gba.cpu.halted ? "Yes" : "No")
+
+    dispcnt := ppu.read_dispcnt(&gba.ppu)
+    fmt.printf("DISPCNT: 0x%04X (Mode: %d, BG2: %s, Forced Blank: %s)\n",
+        dispcnt,
+        dispcnt & 0x7,
+        (dispcnt & (1 << 10)) != 0 ? "On" : "Off",
+        (dispcnt & (1 << 7)) != 0 ? "Yes" : "No")
+    fmt.printf("VCOUNT: %d\n", gba.ppu.vcount)
+    fmt.printf("Scheduler cycles: %d\n", gba.scheduler.current_cycles)
 }
 
 // Shutdown GBA

@@ -326,10 +326,10 @@ ppu_render_scanline :: proc(ppu: ^PPU) {
         // Other modes render backdrop only for now
     }
 
-    // TODO: Render sprites if enabled
-    // if ppu.dispcnt.obj_enable {
-    //     render_sprites(ppu, scanline)
-    // }
+    // Render sprites if enabled
+    if ppu.dispcnt.obj_enable {
+        render_sprites(ppu, scanline)
+    }
 
     // Copy line buffer to framebuffer
     for x in 0 ..< SCREEN_WIDTH {
@@ -513,6 +513,246 @@ render_text_bg :: proc(ppu: ^PPU, bg: int, scanline: int) {
         // Read color from palette
         color := read_palette16(ppu, color_index)
         ppu.line_buffer[screen_x] = color
+    }
+}
+
+// OAM Attribute structure (8 bytes per sprite, 128 sprites max)
+OAM_Attr :: struct {
+    // Attribute 0
+    y:          u8,      // Y coordinate (0-255, wraps)
+    rot_scale:  bool,    // Rotation/Scaling flag
+    double_size: bool,   // Double size (rot/scale) or disable (normal)
+    mode:       u8,      // 0=Normal, 1=Semi-transparent, 2=OBJ Window, 3=Forbidden
+    mosaic:     bool,
+    palette_mode: bool,  // 0=4bpp, 1=8bpp
+    shape:      u8,      // 0=Square, 1=Horizontal, 2=Vertical
+
+    // Attribute 1
+    x:          u16,     // X coordinate (9 bits, signed)
+    rot_param:  u8,      // Rotation/scaling parameter group (if rot_scale)
+    h_flip:     bool,    // Horizontal flip (if !rot_scale)
+    v_flip:     bool,    // Vertical flip (if !rot_scale)
+    size:       u8,      // Size selector (0-3)
+
+    // Attribute 2
+    tile_num:   u16,     // Base tile number (10 bits)
+    priority:   u8,      // Priority (0-3)
+    palette:    u8,      // Palette bank (4bpp only)
+}
+
+// Sprite size lookup table [shape][size] -> (width, height)
+SPRITE_SIZES := [3][4][2]u8{
+    // Square
+    {{8, 8}, {16, 16}, {32, 32}, {64, 64}},
+    // Horizontal
+    {{16, 8}, {32, 8}, {32, 16}, {64, 32}},
+    // Vertical
+    {{8, 16}, {8, 32}, {16, 32}, {32, 64}},
+}
+
+// Parse OAM entry from raw bytes
+parse_oam_entry :: proc(oam: []u8, index: int) -> OAM_Attr {
+    if oam == nil || index * 8 + 7 >= len(oam) {
+        return {}
+    }
+
+    base := index * 8
+    attr0 := u16(oam[base]) | (u16(oam[base + 1]) << 8)
+    attr1 := u16(oam[base + 2]) | (u16(oam[base + 3]) << 8)
+    attr2 := u16(oam[base + 4]) | (u16(oam[base + 5]) << 8)
+
+    attr: OAM_Attr
+    attr.y = u8(attr0 & 0xFF)
+    attr.rot_scale = (attr0 & (1 << 8)) != 0
+    attr.double_size = (attr0 & (1 << 9)) != 0
+    attr.mode = u8((attr0 >> 10) & 0x3)
+    attr.mosaic = (attr0 & (1 << 12)) != 0
+    attr.palette_mode = (attr0 & (1 << 13)) != 0
+    attr.shape = u8((attr0 >> 14) & 0x3)
+
+    attr.x = attr1 & 0x1FF
+    if attr.rot_scale {
+        attr.rot_param = u8((attr1 >> 9) & 0x1F)
+    } else {
+        attr.h_flip = (attr1 & (1 << 12)) != 0
+        attr.v_flip = (attr1 & (1 << 13)) != 0
+    }
+    attr.size = u8((attr1 >> 14) & 0x3)
+
+    attr.tile_num = attr2 & 0x3FF
+    attr.priority = u8((attr2 >> 10) & 0x3)
+    attr.palette = u8((attr2 >> 12) & 0xF)
+
+    return attr
+}
+
+// Render sprites for current scanline
+render_sprites :: proc(ppu: ^PPU, scanline: int) {
+    if ppu.oam == nil || ppu.vram == nil || ppu.palette == nil {
+        return
+    }
+
+    is_1d_mapping := ppu.dispcnt.obj_mapping
+
+    // Process all 128 sprites (in reverse order for correct priority)
+    for i := 127; i >= 0; i -= 1 {
+        attr := parse_oam_entry(ppu.oam, i)
+
+        // Skip disabled sprites (rot_scale=0 and double_size=1 means disabled)
+        if !attr.rot_scale && attr.double_size {
+            continue
+        }
+
+        // Skip forbidden mode
+        if attr.mode == 3 {
+            continue
+        }
+
+        // Get sprite dimensions
+        if attr.shape > 2 || attr.size > 3 {
+            continue
+        }
+        sprite_width := int(SPRITE_SIZES[attr.shape][attr.size][0])
+        sprite_height := int(SPRITE_SIZES[attr.shape][attr.size][1])
+
+        // Handle double size for rotation/scaling
+        render_width := sprite_width
+        render_height := sprite_height
+        if attr.rot_scale && attr.double_size {
+            render_width *= 2
+            render_height *= 2
+        }
+
+        // Calculate sprite Y position (handle wrap-around)
+        sprite_y := int(attr.y)
+        if sprite_y >= 160 {
+            sprite_y -= 256
+        }
+
+        // Check if sprite is on this scanline
+        if scanline < sprite_y || scanline >= sprite_y + render_height {
+            continue
+        }
+
+        // Calculate which row of the sprite we're rendering
+        sprite_row := scanline - sprite_y
+
+        // Handle vertical flip (non-rotated sprites only)
+        if !attr.rot_scale && attr.v_flip {
+            sprite_row = render_height - 1 - sprite_row
+        }
+
+        // For double-size rotation sprites, adjust to actual sprite coordinates
+        if attr.rot_scale && attr.double_size {
+            // TODO: Proper rotation/scaling support
+            // For now, just render without rotation
+            sprite_row = sprite_row / 2
+            if sprite_row >= sprite_height {
+                continue
+            }
+        }
+
+        // Calculate sprite X position (9-bit signed)
+        sprite_x := int(attr.x)
+        if sprite_x >= 256 {
+            sprite_x -= 512
+        }
+
+        // Tile base for sprites is at 0x10000 in VRAM
+        tile_base := 0x10000
+
+        // Render each pixel of the sprite row
+        for px in 0 ..< render_width {
+            screen_x := sprite_x + px
+            if screen_x < 0 || screen_x >= SCREEN_WIDTH {
+                continue
+            }
+
+            // Handle horizontal flip
+            pixel_x := px
+            if !attr.rot_scale && attr.h_flip {
+                pixel_x = render_width - 1 - px
+            }
+
+            // For double-size rotation, adjust pixel coordinate
+            if attr.rot_scale && attr.double_size {
+                pixel_x = pixel_x / 2
+            }
+
+            // Calculate tile coordinates
+            tile_x := pixel_x / 8
+            tile_y := sprite_row / 8
+            pixel_in_tile_x := pixel_x % 8
+            pixel_in_tile_y := sprite_row % 8
+
+            // Calculate tile number based on mapping mode
+            tile_num: int
+            if is_1d_mapping {
+                // 1D mapping: tiles are sequential
+                tiles_per_row := sprite_width / 8
+                if attr.palette_mode {
+                    // 8bpp: tiles take 2x space
+                    tile_num = int(attr.tile_num) + tile_y * tiles_per_row * 2 + tile_x * 2
+                } else {
+                    // 4bpp
+                    tile_num = int(attr.tile_num) + tile_y * tiles_per_row + tile_x
+                }
+            } else {
+                // 2D mapping: 32 tiles per row in VRAM
+                if attr.palette_mode {
+                    tile_num = int(attr.tile_num) + tile_y * 32 + tile_x * 2
+                } else {
+                    tile_num = int(attr.tile_num) + tile_y * 32 + tile_x
+                }
+            }
+
+            // Read pixel from tile
+            color_index: int
+            if attr.palette_mode {
+                // 8bpp: 64 bytes per tile
+                tile_offset := tile_base + tile_num * 32 + pixel_in_tile_y * 8 + pixel_in_tile_x
+                if tile_offset >= len(ppu.vram) {
+                    continue
+                }
+                color_index = int(ppu.vram[tile_offset])
+            } else {
+                // 4bpp: 32 bytes per tile
+                tile_offset := tile_base + tile_num * 32 + pixel_in_tile_y * 4 + pixel_in_tile_x / 2
+                if tile_offset >= len(ppu.vram) {
+                    continue
+                }
+                byte := ppu.vram[tile_offset]
+                if pixel_in_tile_x & 1 == 0 {
+                    color_index = int(byte & 0xF)
+                } else {
+                    color_index = int(byte >> 4)
+                }
+            }
+
+            // Skip transparent pixels
+            if color_index == 0 {
+                continue
+            }
+
+            // Check priority against existing pixel
+            if attr.priority >= ppu.priority_buffer[screen_x] {
+                continue
+            }
+
+            // Get color from sprite palette (starts at offset 256 in palette RAM)
+            palette_offset: int
+            if attr.palette_mode {
+                // 8bpp: single 256-color palette
+                palette_offset = 256 + color_index
+            } else {
+                // 4bpp: 16 palettes of 16 colors each
+                palette_offset = 256 + int(attr.palette) * 16 + color_index
+            }
+
+            color := read_palette16(ppu, palette_offset)
+            ppu.line_buffer[screen_x] = color
+            ppu.priority_buffer[screen_x] = attr.priority
+        }
     }
 }
 

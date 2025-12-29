@@ -253,10 +253,8 @@ read16 :: proc(bus: ^Bus, addr: u32) -> (value: u16, cycles: u8) {
         cycles = 1
     }
 
-    // Handle misaligned rotation
-    if (addr & 1) != 0 {
-        value = (value >> 8) | (value << 8)
-    }
+    // Note: For LDRH misaligned access, the 32-bit rotation is handled by the CPU
+    // (the bus just returns the raw halfword from the aligned address)
 
     return
 }

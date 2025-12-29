@@ -43,7 +43,11 @@ decode_arm_instruction :: proc "contextless" (bits_27_20: u32, bits_7_4: u32) ->
         // Data processing / Multiply / Halfword transfer
         if bits_7_4 == 0b1001 {
             // Multiply or swap
-            if (bits_24_20 & 0x18) == 0 {
+            // MUL/MLA: bits 27-24 = 0000 (bits_24_20 & 0x10 == 0, bit 23 can be 0 or 1)
+            // UMULL/UMLAL/SMULL/SMLAL: bits 27-24 = 0000, bit 23 = 1
+            // Swap: bits 27-24 = 0001 (bits_24_20 & 0x10 != 0)
+            if (bits_24_20 & 0x10) == 0 {
+                // bits 24 = 0, includes MUL, MLA, and long multiply
                 return arm_multiply
             } else if (bits_24_20 & 0x1B) == 0x10 {
                 return arm_swap
@@ -55,16 +59,17 @@ decode_arm_instruction :: proc "contextless" (bits_27_20: u32, bits_7_4: u32) ->
         } else if bits_27_20 == 0x12 && bits_7_4 == 0x1 {
             // BX instruction (special encoding that looks like PSR transfer)
             return arm_bx
-        } else if (bits_7_4 & 0x1) == 0 || (bits_24_20 & 0x19) != 0x10 {
-            // Data processing (register)
-            return arm_data_processing
-        } else {
-            // PSR transfer
-            if (bits_24_20 & 0x1) == 0 {
+        } else if (bits_24_20 & 0x19) == 0x10 && bits_7_4 == 0 {
+            // PSR transfer: bits [24:23]=10, bit [20]=0, bits [7:4]=0
+            // MRS: bit 21 = 0, MSR: bit 21 = 1
+            if (bits_24_20 & 0x2) == 0 {
                 return arm_mrs
             } else {
                 return arm_msr_reg
             }
+        } else {
+            // Data processing (register)
+            return arm_data_processing
         }
     case 0b001:
         // Data processing (immediate) or PSR transfer (immediate)
@@ -307,6 +312,88 @@ barrel_shift :: proc(cpu: ^CPU, value: u32, shift_type: u32, amount: u32, carry_
     return
 }
 
+// Barrel shifter for register-specified shift amounts (non-zero)
+// Different from immediate shifts: no special case for 0, different handling of >= 32
+barrel_shift_reg :: proc(cpu: ^CPU, value: u32, shift_type: u32, amount: u32, carry_in: bool, update_carry: bool) -> (result: u32, carry_out: bool) {
+    carry_out = carry_in
+
+    switch shift_type {
+    case 0: // LSL
+        if amount < 32 {
+            result = value << amount
+            if update_carry {
+                carry_out = (value & (1 << (32 - amount))) != 0
+            }
+        } else if amount == 32 {
+            result = 0
+            if update_carry {
+                carry_out = (value & 1) != 0
+            }
+        } else { // > 32
+            result = 0
+            if update_carry {
+                carry_out = false
+            }
+        }
+    case 1: // LSR
+        if amount < 32 {
+            result = value >> amount
+            if update_carry {
+                carry_out = (value & (1 << (amount - 1))) != 0
+            }
+        } else if amount == 32 {
+            result = 0
+            if update_carry {
+                carry_out = (value & 0x80000000) != 0
+            }
+        } else { // > 32
+            result = 0
+            if update_carry {
+                carry_out = false
+            }
+        }
+    case 2: // ASR
+        if amount < 32 {
+            result = u32(i32(value) >> amount)
+            if update_carry {
+                carry_out = (value & (1 << (amount - 1))) != 0
+            }
+        } else { // >= 32
+            if (value & 0x80000000) != 0 {
+                result = 0xFFFFFFFF
+                if update_carry {
+                    carry_out = true
+                }
+            } else {
+                result = 0
+                if update_carry {
+                    carry_out = false
+                }
+            }
+        }
+    case 3: // ROR
+        if amount == 0 {
+            // ROR by 0 from register = no rotation
+            result = value
+        } else {
+            effective_amount := amount & 31
+            if effective_amount == 0 {
+                result = value
+                if update_carry {
+                    carry_out = (value & 0x80000000) != 0
+                }
+            } else {
+                result = (value >> effective_amount) | (value << (32 - effective_amount))
+                if update_carry {
+                    carry_out = (value & (1 << (effective_amount - 1))) != 0
+                }
+            }
+        }
+    }
+
+    return
+}
+
 // Get operand2 for data processing instructions
 get_operand2 :: proc(cpu: ^CPU, opcode: u32, update_carry: bool) -> (value: u32, carry: bool) {
     carry = get_flag_c(cpu)
@@ -336,9 +423,21 @@ get_operand2 :: proc(cpu: ^CPU, opcode: u32, update_carry: bool) -> (value: u32,
             // Shift by register
             rs := u4((opcode >> 8) & 0xF)
             shift_amount := get_reg(cpu, rs) & 0xFF
-            value, carry = barrel_shift(cpu, rm_value, shift_type, shift_amount, carry, update_carry)
+
+            // When Rm is PC in a register shift, PC reads as PC+12 (extra 4 bytes)
+            if rm == 15 {
+                rm_value += 4
+            }
+
+            // Register shift by 0: no shift, carry unchanged
+            if shift_amount == 0 {
+                value = rm_value
+                // carry already set to current C flag
+            } else {
+                value, carry = barrel_shift_reg(cpu, rm_value, shift_type, shift_amount, carry, update_carry)
+            }
         } else {
-            // Shift by immediate
+            // Shift by immediate (amount 0 has special meanings)
             shift_amount := (opcode >> 7) & 0x1F
             value, carry = barrel_shift(cpu, rm_value, shift_type, shift_amount, carry, update_carry)
         }
@@ -357,6 +456,14 @@ arm_data_processing :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
     rd := u4((opcode >> 12) & 0xF)
 
     rn_value := get_reg(cpu, rn)
+
+    // When using register shift (bit 25=0, bit 4=1) and Rn is PC, PC reads as PC+12
+    // (extra cycle for register shift advances PC by 4)
+    is_register_shift := (opcode & (1 << 25)) == 0 && (opcode & (1 << 4)) != 0
+    if is_register_shift && rn == 15 {
+        rn_value += 4
+    }
+
     operand2, shifter_carry := get_operand2(cpu, opcode, s)
 
     result: u32
@@ -664,7 +771,9 @@ arm_single_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
         shift_type := (opcode >> 5) & 0x3
         shift_amount := (opcode >> 7) & 0x1F
 
-        offset, _ = barrel_shift(cpu, rm_val, shift_type, shift_amount, false, false)
+        // Use actual carry flag for RRX (shift_type=3, shift_amount=0)
+        carry := get_flag_c(cpu)
+        offset, _ = barrel_shift(cpu, rm_val, shift_type, shift_amount, carry, false)
     } else {
         offset = opcode & 0xFFF
     }
@@ -711,7 +820,9 @@ arm_single_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
     }
 
     // Writeback
-    if !pre_indexed {
+    // For loads, don't writeback if rd == rn (loaded value takes precedence)
+    should_writeback := !is_load || rd != rn
+    if !pre_indexed && should_writeback {
         // Post-indexed always writes back
         if add_offset {
             base += offset
@@ -719,7 +830,7 @@ arm_single_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
             base -= offset
         }
         set_reg(cpu, rn, base)
-    } else if writeback {
+    } else if writeback && should_writeback {
         set_reg(cpu, rn, addr)
     }
 
@@ -774,10 +885,14 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
         case 0b01: // LDRH
             val, c := bus.read16(mem_bus, addr)
             value = u32(val)
+            // For misaligned LDRH, rotate the 32-bit result right by 8
+            if (addr & 1) != 0 {
+                value = (value >> 8) | (value << 24)
+            }
             cycles = c
             if arm_debug_ldst {
-                fmt.printf("  ARM LDRH: rd=%d rn=%d addr=%08X val=%04X\n",
-                    rd, rn, addr, val)
+                fmt.printf("  ARM LDRH: rd=%d rn=%d addr=%08X val=%04X result=%08X\n",
+                    rd, rn, addr, val, value)
             }
         case 0b10: // LDRSB
             val, c := bus.read8(mem_bus, addr)
@@ -793,17 +908,32 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
                     rd, rn, addr, val, value)
             }
         case 0b11: // LDRSH
-            val, c := bus.read16(mem_bus, addr)
-            // Sign extend
-            if (val & 0x8000) != 0 {
-                value = u32(val) | 0xFFFF0000
+            // For misaligned LDRSH, act like LDRSB (sign-extend byte)
+            if (addr & 1) != 0 {
+                val, c := bus.read8(mem_bus, addr)
+                if (val & 0x80) != 0 {
+                    value = u32(val) | 0xFFFFFF00
+                } else {
+                    value = u32(val)
+                }
+                cycles = c
+                if arm_debug_ldst {
+                    fmt.printf("  ARM LDRSH (misaligned->LDRSB): rd=%d rn=%d addr=%08X val=%02X result=%08X\n",
+                        rd, rn, addr, val, value)
+                }
             } else {
-                value = u32(val)
-            }
-            cycles = c
-            if arm_debug_ldst {
-                fmt.printf("  ARM LDRSH: rd=%d rn=%d addr=%08X val=%04X result=%08X\n",
-                    rd, rn, addr, val, value)
+                val, c := bus.read16(mem_bus, addr)
+                // Sign extend
+                if (val & 0x8000) != 0 {
+                    value = u32(val) | 0xFFFF0000
+                } else {
+                    value = u32(val)
+                }
+                cycles = c
+                if arm_debug_ldst {
+                    fmt.printf("  ARM LDRSH: rd=%d rn=%d addr=%08X val=%04X result=%08X\n",
+                        rd, rn, addr, val, value)
+                }
             }
         }
         set_reg(cpu, rd, value)

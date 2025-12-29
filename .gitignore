@@ -3,7 +3,6 @@
 *.obj
 *.exe
 *.out
-*.bin
 
 # Build directory
 build/
@@ -19,7 +18,24 @@ build/
 .DS_Store
 Thumbs.db
 
-# ROMs (don't commit copyrighted material)
+# ROMs and BIOS (don't commit copyrighted material)
 roms/
+bios/
+*.gba
+*.GBA
 *.gb
 *.gbc
+*.bin
+!src/**/*.bin
+
+# Save files
+saves/
+*.sav
+*.srm
+
+# Logs
+logs/
+*.log
+
+# Test output
+*.trace

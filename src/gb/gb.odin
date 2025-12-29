@@ -510,7 +510,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0x3C: c.a = inc8(c, c.a); return 4  // INC A
     case 0x3D: c.a = dec8(c, c.a); return 4  // DEC A
     case 0x3E: c.a = fetch8(gb); return 8  // LD A,n
-    case 0x3F: c.f = (c.f & 0x80) ~ 0x10; return 4  // CCF
+    case 0x3F: c.f = (c.f & 0x90) ~ 0x10; return 4  // CCF - toggle C, clear N/H, keep Z
 
     // 0x40-0x7F: LD r,r' and HALT
     case 0x40: return 4  // LD B,B

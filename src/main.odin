@@ -6,7 +6,9 @@ import "core:strings"
 import "core:time"
 import "cpu"
 import "ppu"
-import "vendor:sdl2"
+
+// Headless mode flag - set via build define
+HEADLESS_ONLY :: #config(HEADLESS_ONLY, true)
 
 // Display scaling
 DISPLAY_SCALE :: 2
@@ -42,7 +44,7 @@ print_usage :: proc() {
     fmt.println("  --break <address>   Set breakpoint at address (hex)")
     fmt.println("  --headless          Run without display (for testing)")
     fmt.println("  --frames <n>        Run for n frames then exit (for testing)")
-    fmt.println("  --screenshot <path> Save screenshot as PPM image")
+    fmt.println("  --screenshot <path> Save screenshot (PNG if .png, otherwise PPM)")
     fmt.println("  --skip-bios         Skip BIOS and start directly at ROM")
     fmt.println("  --trace-cpu         Print first 50 instructions to console")
     fmt.println("  --help              Show this help message")
@@ -192,118 +194,8 @@ parse_args :: proc() -> (options: Options, ok: bool) {
     return
 }
 
-// SDL2 display state
-Display :: struct {
-    window:   ^sdl2.Window,
-    renderer: ^sdl2.Renderer,
-    texture:  ^sdl2.Texture,
-}
-
-// Initialize SDL2 display
-display_init :: proc(title: cstring) -> (display: Display, ok: bool) {
-    if sdl2.Init({.VIDEO}) != 0 {
-        fmt.eprintln("Error: Failed to initialize SDL2:", sdl2.GetError())
-        return {}, false
-    }
-
-    display.window = sdl2.CreateWindow(
-        title,
-        sdl2.WINDOWPOS_CENTERED,
-        sdl2.WINDOWPOS_CENTERED,
-        WINDOW_WIDTH,
-        WINDOW_HEIGHT,
-        {.SHOWN, .RESIZABLE},
-    )
-    if display.window == nil {
-        fmt.eprintln("Error: Failed to create window:", sdl2.GetError())
-        sdl2.Quit()
-        return {}, false
-    }
-
-    display.renderer = sdl2.CreateRenderer(display.window, -1, {.ACCELERATED, .PRESENTVSYNC})
-    if display.renderer == nil {
-        fmt.eprintln("Error: Failed to create renderer:", sdl2.GetError())
-        sdl2.DestroyWindow(display.window)
-        sdl2.Quit()
-        return {}, false
-    }
-
-    // Set logical size for scaling
-    sdl2.RenderSetLogicalSize(display.renderer, ppu.SCREEN_WIDTH, ppu.SCREEN_HEIGHT)
-
-    // Create texture for framebuffer (BGR555 format)
-    display.texture = sdl2.CreateTexture(
-        display.renderer,
-        .BGR555,
-        .STREAMING,
-        ppu.SCREEN_WIDTH,
-        ppu.SCREEN_HEIGHT,
-    )
-    if display.texture == nil {
-        fmt.eprintln("Error: Failed to create texture:", sdl2.GetError())
-        sdl2.DestroyRenderer(display.renderer)
-        sdl2.DestroyWindow(display.window)
-        sdl2.Quit()
-        return {}, false
-    }
-
-    ok = true
-    return
-}
-
-// Destroy SDL2 display
-display_destroy :: proc(display: ^Display) {
-    if display.texture != nil {
-        sdl2.DestroyTexture(display.texture)
-    }
-    if display.renderer != nil {
-        sdl2.DestroyRenderer(display.renderer)
-    }
-    if display.window != nil {
-        sdl2.DestroyWindow(display.window)
-    }
-    sdl2.Quit()
-}
-
-// Update display with framebuffer
-display_update :: proc(display: ^Display, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16) {
-    // Update texture with framebuffer data
-    sdl2.UpdateTexture(
-        display.texture,
-        nil,
-        framebuffer,
-        ppu.SCREEN_WIDTH * 2, // pitch in bytes
-    )
-
-    // Clear and render
-    sdl2.RenderClear(display.renderer)
-    sdl2.RenderCopy(display.renderer, display.texture, nil, nil)
-    sdl2.RenderPresent(display.renderer)
-}
-
-// Poll SDL2 events, returns false if quit requested
-display_poll_events :: proc() -> bool {
-    event: sdl2.Event
-    for sdl2.PollEvent(&event) {
-        #partial switch event.type {
-        case .QUIT:
-            return false
-        case .KEYDOWN:
-            #partial switch event.key.keysym.sym {
-            case .ESCAPE:
-                return false
-            }
-        }
-    }
-    return true
-}
-
-// Update window title with FPS
-display_set_title :: proc(display: ^Display, fps: f64) {
-    title: [128]u8
-    fmt.bprintf(title[:], "gba-odin - %.1f FPS\x00", fps)
-    sdl2.SetWindowTitle(display.window, cstring(&title[0]))
-}
+// Display functions are in display_headless.odin (for headless builds)
+// or would be in display_sdl.odin (for SDL2 builds)
 
 // Save framebuffer as PPM image (simple format, no external deps)
 save_screenshot :: proc(path: string, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16) -> bool {
@@ -335,6 +227,179 @@ save_screenshot :: proc(path: string, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.SCRE
         }
         os.write(file, pixel_data[:])
     }
+
+    fmt.println("Screenshot saved to:", path)
+    return true
+}
+
+// CRC32 for PNG - computed on demand (no @init needed)
+png_crc32 :: proc(data: []u8) -> u32 {
+    crc := u32(0xFFFFFFFF)
+    for b in data {
+        c := crc ~ u32(b)
+        // Unrolled CRC calculation
+        for _ in 0..<8 {
+            if (c & 1) != 0 {
+                c = 0xEDB88320 ~ (c >> 1)
+            } else {
+                c = c >> 1
+            }
+        }
+        crc = c
+    }
+    return crc ~ 0xFFFFFFFF
+}
+
+// Adler32 for zlib wrapper
+adler32 :: proc(data: []u8) -> u32 {
+    a := u32(1)
+    b := u32(0)
+    for byte in data {
+        a = (a + u32(byte)) % 65521
+        b = (b + a) % 65521
+    }
+    return (b << 16) | a
+}
+
+// Write a PNG chunk
+write_png_chunk :: proc(file: os.Handle, chunk_type: [4]u8, data: []u8) {
+    // Length (big-endian)
+    length := u32(len(data))
+    length_be: [4]u8 = {u8(length >> 24), u8(length >> 16), u8(length >> 8), u8(length)}
+    os.write(file, length_be[:])
+
+    // Type - write bytes individually since we can't slice the array
+    type_bytes: [4]u8 = chunk_type
+    os.write(file, type_bytes[:])
+
+    // Data
+    if len(data) > 0 {
+        os.write(file, data)
+    }
+
+    // CRC (over type + data)
+    crc_data := make([]u8, 4 + len(data))
+    defer delete(crc_data)
+    crc_data[0] = chunk_type[0]
+    crc_data[1] = chunk_type[1]
+    crc_data[2] = chunk_type[2]
+    crc_data[3] = chunk_type[3]
+    for i in 0..<len(data) {
+        crc_data[4+i] = data[i]
+    }
+    crc := png_crc32(crc_data)
+    crc_be: [4]u8 = {u8(crc >> 24), u8(crc >> 16), u8(crc >> 8), u8(crc)}
+    os.write(file, crc_be[:])
+}
+
+// Save framebuffer as PNG image (uncompressed)
+save_screenshot_png :: proc(path: string, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16) -> bool {
+    // Open file for writing
+    file, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0o644)
+    if err != os.ERROR_NONE {
+        fmt.eprintln("Error: Failed to create screenshot file:", path)
+        return false
+    }
+    defer os.close(file)
+
+    // PNG signature
+    png_sig: [8]u8 = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
+    os.write(file, png_sig[:])
+
+    // IHDR chunk
+    width := u32(ppu.SCREEN_WIDTH)
+    height := u32(ppu.SCREEN_HEIGHT)
+    ihdr: [13]u8 = {
+        u8(width >> 24), u8(width >> 16), u8(width >> 8), u8(width),     // Width
+        u8(height >> 24), u8(height >> 16), u8(height >> 8), u8(height), // Height
+        8,    // Bit depth
+        2,    // Color type (RGB)
+        0,    // Compression method
+        0,    // Filter method
+        0,    // Interlace method
+    }
+    write_png_chunk(file, {'I', 'H', 'D', 'R'}, ihdr[:])
+
+    // Prepare raw image data with filter bytes
+    row_size := 1 + ppu.SCREEN_WIDTH * 3  // 1 filter byte + RGB per row
+    raw_size := ppu.SCREEN_HEIGHT * row_size
+    raw_data := make([]u8, raw_size)
+    defer delete(raw_data)
+
+    idx := 0
+    for y in 0..<ppu.SCREEN_HEIGHT {
+        raw_data[idx] = 0  // No filter
+        idx += 1
+        for x in 0..<ppu.SCREEN_WIDTH {
+            bgr555 := framebuffer[y][x]
+            // Extract 5-bit components and expand to 8-bit
+            b := u8((bgr555 >> 10) & 0x1F)
+            g := u8((bgr555 >> 5) & 0x1F)
+            r := u8(bgr555 & 0x1F)
+            // Expand 5-bit to 8-bit
+            raw_data[idx] = (r << 3) | (r >> 2)
+            raw_data[idx+1] = (g << 3) | (g >> 2)
+            raw_data[idx+2] = (b << 3) | (b >> 2)
+            idx += 3
+        }
+    }
+
+    // Create uncompressed zlib stream (stored blocks)
+    // zlib header: 0x78 0x01 (no compression)
+    // For each block: 1 byte header, 2 bytes len, 2 bytes ~len, then data
+    // Max block size is 65535, so we may need multiple blocks
+
+    MAX_BLOCK :: 65535
+    num_blocks := (raw_size + MAX_BLOCK - 1) / MAX_BLOCK
+    zlib_size := 2 + num_blocks * 5 + raw_size + 4  // header + block headers + data + adler32
+    zlib_data := make([]u8, zlib_size)
+    defer delete(zlib_data)
+
+    // zlib header
+    zlib_data[0] = 0x78
+    zlib_data[1] = 0x01
+
+    zidx := 2
+    remaining := raw_size
+    src_idx := 0
+    for block := 0; block < num_blocks; block += 1 {
+        block_size := min(remaining, MAX_BLOCK)
+        is_final := block == num_blocks - 1
+
+        // Block header: BFINAL=1 for last, BTYPE=00 (stored)
+        zlib_data[zidx] = is_final ? 0x01 : 0x00
+        zidx += 1
+
+        // LEN and NLEN (little-endian)
+        len16 := u16(block_size)
+        zlib_data[zidx] = u8(len16 & 0xFF)
+        zlib_data[zidx+1] = u8(len16 >> 8)
+        zlib_data[zidx+2] = u8(~len16 & 0xFF)
+        zlib_data[zidx+3] = u8((~len16) >> 8)
+        zidx += 4
+
+        // Copy data
+        for i in 0..<block_size {
+            zlib_data[zidx+i] = raw_data[src_idx+i]
+        }
+        zidx += block_size
+        src_idx += block_size
+        remaining -= block_size
+    }
+
+    // Adler32 checksum (big-endian)
+    adler := adler32(raw_data)
+    zlib_data[zidx] = u8(adler >> 24)
+    zlib_data[zidx+1] = u8(adler >> 16)
+    zlib_data[zidx+2] = u8(adler >> 8)
+    zlib_data[zidx+3] = u8(adler)
+
+    // IDAT chunk
+    write_png_chunk(file, {'I', 'D', 'A', 'T'}, zlib_data[:])
+
+    // IEND chunk
+    empty: []u8
+    write_png_chunk(file, {'I', 'E', 'N', 'D'}, empty)
 
     fmt.println("Screenshot saved to:", path)
     return true
@@ -391,7 +456,7 @@ main :: proc() {
 
     // Initialize display if not headless
     display: Display
-    if !options.headless {
+    if !options.headless && !HEADLESS_ONLY {
         display, ok = display_init("gba-odin")
         if !ok {
             fmt.eprintln("Warning: Failed to initialize display, running headless")
@@ -399,6 +464,9 @@ main :: proc() {
         } else {
             defer display_destroy(&display)
         }
+    } else {
+        // Force headless mode when built without SDL2
+        options.headless = true
     }
 
     // Run emulation
@@ -466,7 +534,12 @@ main :: proc() {
     // Save screenshot if requested
     if options.screenshot != "" {
         framebuffer := gba_get_framebuffer(&gba)
-        save_screenshot(options.screenshot, framebuffer)
+        // Use PNG for .png extension, otherwise PPM
+        if strings.has_suffix(options.screenshot, ".png") {
+            save_screenshot_png(options.screenshot, framebuffer)
+        } else {
+            save_screenshot(options.screenshot, framebuffer)
+        }
     }
 
     // Final stats

@@ -39,3 +39,4 @@ logs/
 
 # Test output
 *.trace
+test_results/

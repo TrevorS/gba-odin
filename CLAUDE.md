@@ -37,6 +37,7 @@ gba-odin/
 ├── src/
 │   ├── main.odin           # Entry point, system detection, main loop
 │   ├── system.odin         # System type detection (GB/GBC/GBA)
+│   ├── cartridge.odin      # ROM loading, save detection (shared)
 │   ├── gba.odin            # Top-level GBA struct, orchestration
 │   ├── scheduler.odin      # Event-driven timing coordinator
 │   ├── cpu/                # GBA CPU (ARM7TDMI)
@@ -49,16 +50,15 @@ gba-odin/
 │   │   ├── bus.odin        # Memory bus, read/write dispatch
 │   │   └── mmio.odin       # I/O register dispatch
 │   ├── ppu/                # GBA Picture Processing Unit
-│   │   └── ppu.odin        # PPU rendering (Mode 0/3/4)
-│   ├── gb/                 # Game Boy / Game Boy Color
-│   │   ├── gb.odin         # GB system orchestration
-│   │   ├── cpu/
-│   │   │   └── lr35902.odin    # GB CPU (LR35902/SM83)
-│   │   ├── bus/
-│   │   │   └── bus.odin        # GB memory bus, MBC support
-│   │   └── ppu/
-│   │       └── ppu.odin        # GB PPU rendering
-│   └── cartridge.odin      # ROM loading, save detection
+│   │   └── ppu.odin        # PPU rendering (Mode 0/3/4 + sprites)
+│   └── gb/                 # Game Boy / Game Boy Color
+│       ├── gb.odin         # GB system orchestration
+│       ├── cpu/
+│       │   └── lr35902.odin    # GB CPU (LR35902/SM83)
+│       ├── bus/
+│       │   └── bus.odin        # GB memory bus, MBC support
+│       └── ppu/
+│           └── ppu.odin        # GB PPU rendering
 ├── docs/
 │   ├── TECHNICAL_REQUIREMENTS.md  # Detailed specifications
 │   └── DESIGN.md                  # Design decisions and rationale
@@ -79,24 +79,43 @@ gba-odin/
 
 ## Implementation Status
 
-### Game Boy (GB/GBC) - Playable ✅
-- [x] CPU (LR35902) - Full instruction set
-- [x] PPU - Background, window, sprites
-- [x] Memory Bus - MBC1/MBC3/MBC5 support
-- [x] Interrupts - VBlank, STAT, Timer, Joypad
-- [x] Timer
-- [x] Input
-- [ ] Audio (APU)
-- [ ] Save states
+### Shared Components
 
-### Game Boy Advance (GBA) - In Progress
-- **Phase 1** ✅: CPU (ARM7TDMI) + Memory Bus + Scheduler
-- **Phase 2** 🔄: PPU fundamentals (Mode 0/3/4 + Sprites)
-- **Phase 3**: Interrupts + Timers
-- **Phase 4**: DMA
-- **Phase 5**: Complete PPU (all modes, windows, effects)
-- **Phase 6**: Audio
-- **Phase 7**: Polish (saves, edge cases)
+These components are shared between GB and GBA:
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| ROM Loading | ✅ Done | Auto-detection, header parsing |
+| Input/Controller | ✅ Done | SDL2 keyboard/gamepad mapping |
+| Framebuffer | ✅ Done | PNG export, headless mode |
+| Audio (APU) | ❌ Not started | Different implementations, shared output |
+| Save States | ❌ Not started | Serialize/deserialize emulator state |
+| Battery Saves | ❌ Not started | SRAM/Flash persistence |
+
+### Game Boy (GB/GBC)
+
+| Phase | Status | Components |
+|-------|--------|------------|
+| **Phase 1** | ✅ Done | CPU (LR35902), Memory Bus, MBC1/3/5 |
+| **Phase 2** | ✅ Done | PPU (BG, Window, Sprites), Interrupts, Timer, Input |
+| **Phase 3** | ❌ Pending | Audio (APU) - 4 channels |
+| **Phase 4** | ❌ Pending | Polish (save states, serial link stub) |
+
+**Current:** Playable - Tetris and other games run correctly
+
+### Game Boy Advance (GBA)
+
+| Phase | Status | Components |
+|-------|--------|------------|
+| **Phase 1** | ✅ Done | CPU (ARM7TDMI), Memory Bus, Scheduler |
+| **Phase 2** | ✅ Done | PPU (Mode 0/3/4, Sprites, OAM) |
+| **Phase 3** | ❌ Pending | Interrupts (IE/IF/IME), Timers (TM0-TM3) |
+| **Phase 4** | ❌ Pending | DMA (channels 0-3) |
+| **Phase 5** | ❌ Pending | Complete PPU (Mode 1/2/5, windows, blending, mosaic) |
+| **Phase 6** | ❌ Pending | Audio (APU) - 4 legacy + 2 direct sound |
+| **Phase 7** | ❌ Pending | Polish (saves, RTC, edge cases) |
+
+**Current:** Basic rendering works, needs interrupts for game logic
 
 ## Documentation
 

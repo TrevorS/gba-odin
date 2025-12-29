@@ -11,21 +11,30 @@ description: |
 
 ## Quick Install (Linux)
 
+**Step 1**: Get the download URL for the latest release:
 ```bash
-# Download latest release
-curl -L "https://github.com/odin-lang/Odin/releases/latest/download/odin-linux-amd64-$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest | grep tag_name | cut -d'"' -f4).tar.gz" -o /tmp/odin.tar.gz
+curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest | grep -o '"browser_download_url": "[^"]*linux[^"]*amd64[^"]*"' | head -1 | cut -d'"' -f4
+```
 
-# Or find latest directly:
-LATEST=$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest | grep -o '"browser_download_url": "[^"]*linux[^"]*amd64[^"]*"' | head -1 | cut -d'"' -f4)
-curl -L "$LATEST" -o /tmp/odin.tar.gz
+**Step 2**: Download using the URL from Step 1 (replace URL as needed):
+```bash
+curl -L "https://github.com/odin-lang/Odin/releases/download/dev-2025-12a/odin-linux-amd64-dev-2025-12a.tar.gz" -o /tmp/odin.tar.gz
+```
 
-# Extract to /opt
+**Step 3**: Extract and install:
+```bash
 sudo tar -xzf /tmp/odin.tar.gz -C /opt/
+```
 
-# Link to PATH
-sudo ln -sf /opt/odin-*/odin /usr/local/bin/odin
+**Step 4**: Find the extracted directory and create symlink:
+```bash
+ls /opt/ | grep odin
+# Then create symlink (adjust directory name as needed):
+sudo ln -sf /opt/odin-linux-amd64-nightly+2025-12-04/odin /usr/local/bin/odin
+```
 
-# Verify
+**Step 5**: Verify installation:
+```bash
 odin version
 ```
 
@@ -164,16 +173,15 @@ odin run -file:src/main.odin
 
 ## Update Odin
 
+**Step 1**: Remove old version:
 ```bash
-# Remove old version
 sudo rm -rf /opt/odin-*
+```
 
-# Download and install latest (repeat install steps)
-LATEST=$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest | grep -o '"browser_download_url": "[^"]*linux[^"]*amd64[^"]*"' | head -1 | cut -d'"' -f4)
-curl -L "$LATEST" -o /tmp/odin.tar.gz
-sudo tar -xzf /tmp/odin.tar.gz -C /opt/
-sudo ln -sf /opt/odin-*/odin /usr/local/bin/odin
+**Step 2**: Follow the Quick Install steps above to download and install the latest version.
 
+**Step 3**: Verify the update:
+```bash
 odin version
 ```
 

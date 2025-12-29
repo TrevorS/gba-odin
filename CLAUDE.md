@@ -106,13 +106,64 @@ gba-odin/
 
 ## Testing
 
-```bash
-# CPU instruction tests
-# Place jsmolka's arm.gba and thumb.gba in roms/
+### Unit Tests
 
-make test    # Run Odin tests
-make run     # Run with a ROM
+The project has comprehensive unit tests for all core components. Tests use Odin's built-in `testing` package with the `@(test)` attribute.
+
+```bash
+# Run all unit tests (153 tests total)
+make test
+
+# Run specific test suites
+make test-gb-cpu    # GB CPU tests (34 tests)
+make test-gb-ppu    # GB PPU tests (17 tests)
+make test-gb-bus    # GB Bus tests (30 tests)
+make test-gba-cpu   # GBA CPU tests (45 tests)
+make test-gba-ppu   # GBA PPU tests (27 tests)
 ```
+
+### Test Files
+
+| Component | Test File | Coverage |
+|-----------|-----------|----------|
+| GB CPU (LR35902) | `src/gb/cpu/lr35902_test.odin` | Registers, flags, ALU, interrupts, init |
+| GB PPU | `src/gb/ppu/ppu_test.odin` | Modes, STAT/LCDC, timing, palettes |
+| GB Bus | `src/gb/bus/bus_test.odin` | MBC detection, banking, I/O registers |
+| GBA CPU (ARM7TDMI) | `src/cpu/arm7tdmi_test.odin` | Modes, flags, exceptions, conditions |
+| GBA PPU | `src/ppu/ppu_test.odin` | Video modes, BGCNT, sprites, OAM |
+
+### Writing Tests
+
+```odin
+package my_package
+
+import "core:testing"
+
+@(test)
+test_example :: proc(t: ^testing.T) {
+    // Use testing.expect for boolean conditions
+    testing.expect(t, actual == expected, "description")
+
+    // Use testing.expect_value for value comparisons
+    testing.expect_value(t, actual, expected)
+}
+```
+
+### Integration Testing
+
+```bash
+# Run with a ROM to test full integration
+make run ARGS="roms/test.gb"
+
+# Headless mode for automated testing
+./build/gba-odin --headless --max-frames=300 roms/test.gb
+```
+
+### ROM Tests
+
+For GBA CPU validation, place jsmolka's test ROMs in `roms/`:
+- `arm.gba` - ARM instruction tests
+- `thumb.gba` - THUMB instruction tests
 
 ## Guidelines
 

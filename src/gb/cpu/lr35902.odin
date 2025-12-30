@@ -30,10 +30,6 @@ CPU :: struct {
 
     // Cycle counting
     cycles:          u64,
-
-    // Memory bus (set by emulator)
-    read_byte:       proc(addr: u16) -> u8,
-    write_byte:      proc(addr: u16, value: u8),
 }
 
 // Flag bit positions in F register
@@ -177,125 +173,155 @@ set_flags :: #force_inline proc(cpu: ^CPU, z, n, h, c: bool) {
     if c { cpu.f |= (1 << FLAG_C) }
 }
 
-// Memory access helpers
-read8 :: #force_inline proc(cpu: ^CPU, addr: u16) -> u8 {
-    return cpu.read_byte(addr)
+// =============================================================================
+// ALU Helper Functions
+// =============================================================================
+
+inc8 :: proc(cpu: ^CPU, value: u8) -> u8 {
+    result := value + 1
+    set_flag_z(cpu, result == 0)
+    set_flag_n(cpu, false)
+    set_flag_h(cpu, (value & 0x0F) == 0x0F)
+    return result
 }
 
-write8 :: #force_inline proc(cpu: ^CPU, addr: u16, value: u8) {
-    cpu.write_byte(addr, value)
+dec8 :: proc(cpu: ^CPU, value: u8) -> u8 {
+    result := value - 1
+    set_flag_z(cpu, result == 0)
+    set_flag_n(cpu, true)
+    set_flag_h(cpu, (value & 0x0F) == 0)
+    return result
 }
 
-read16 :: #force_inline proc(cpu: ^CPU, addr: u16) -> u16 {
-    lo := u16(cpu.read_byte(addr))
-    hi := u16(cpu.read_byte(addr + 1))
-    return (hi << 8) | lo
-}
-
-write16 :: #force_inline proc(cpu: ^CPU, addr: u16, value: u16) {
-    cpu.write_byte(addr, u8(value))
-    cpu.write_byte(addr + 1, u8(value >> 8))
-}
-
-// Fetch byte at PC and increment
-fetch8 :: #force_inline proc(cpu: ^CPU) -> u8 {
-    value := cpu.read_byte(cpu.pc)
-    cpu.pc += 1
-    return value
-}
-
-// Fetch 16-bit value at PC and increment
-fetch16 :: #force_inline proc(cpu: ^CPU) -> u16 {
-    lo := u16(cpu.read_byte(cpu.pc))
-    cpu.pc += 1
-    hi := u16(cpu.read_byte(cpu.pc))
-    cpu.pc += 1
-    return (hi << 8) | lo
-}
-
-// Push 16-bit value to stack
-push16 :: #force_inline proc(cpu: ^CPU, value: u16) {
-    cpu.sp -= 1
-    cpu.write_byte(cpu.sp, u8(value >> 8))
-    cpu.sp -= 1
-    cpu.write_byte(cpu.sp, u8(value))
-}
-
-// Pop 16-bit value from stack
-pop16 :: #force_inline proc(cpu: ^CPU) -> u16 {
-    lo := u16(cpu.read_byte(cpu.sp))
-    cpu.sp += 1
-    hi := u16(cpu.read_byte(cpu.sp))
-    cpu.sp += 1
-    return (hi << 8) | lo
-}
-
-// Execute one instruction, returns cycles consumed
-step :: proc(cpu: ^CPU) -> u8 {
-    // Handle scheduled IME enable
-    if cpu.ime_scheduled {
-        cpu.ime_scheduled = false
-        cpu.ime = true
+add_a :: proc(cpu: ^CPU, value: u8, with_carry: bool) {
+    carry: u8 = 0
+    if with_carry && get_flag_c(cpu) {
+        carry = 1
     }
 
-    // If halted, just return 4 cycles
-    if cpu.halted {
-        return 4
-    }
+    result := u16(cpu.a) + u16(value) + u16(carry)
+    half := (cpu.a & 0x0F) + (value & 0x0F) + carry
 
-    // Fetch and execute opcode
-    opcode := fetch8(cpu)
-    cycles := execute(cpu, opcode)
+    set_flag_z(cpu, u8(result) == 0)
+    set_flag_n(cpu, false)
+    set_flag_h(cpu, half > 0x0F)
+    set_flag_c(cpu, result > 0xFF)
 
-    cpu.cycles += u64(cycles)
-    return cycles
+    cpu.a = u8(result)
 }
 
-// Handle interrupts, returns true if interrupt was serviced
-handle_interrupts :: proc(cpu: ^CPU, ie: u8, if_: u8) -> (serviced: bool, new_if: u8) {
-    if !cpu.ime {
-        // Even with IME=0, interrupts can wake from HALT
-        if cpu.halted && (ie & if_) != 0 {
-            cpu.halted = false
-        }
-        return false, if_
+sub_a :: proc(cpu: ^CPU, value: u8, with_carry: bool) {
+    carry: u8 = 0
+    if with_carry && get_flag_c(cpu) {
+        carry = 1
     }
 
-    pending := ie & if_
-    if pending == 0 {
-        return false, if_
+    result := i16(cpu.a) - i16(value) - i16(carry)
+    half := i16(cpu.a & 0x0F) - i16(value & 0x0F) - i16(carry)
+
+    set_flag_z(cpu, u8(result) == 0)
+    set_flag_n(cpu, true)
+    set_flag_h(cpu, half < 0)
+    set_flag_c(cpu, result < 0)
+
+    cpu.a = u8(result)
+}
+
+and_a :: proc(cpu: ^CPU, value: u8) {
+    cpu.a &= value
+    set_flags(cpu, cpu.a == 0, false, true, false)
+}
+
+xor_a :: proc(cpu: ^CPU, value: u8) {
+    cpu.a ~= value
+    set_flags(cpu, cpu.a == 0, false, false, false)
+}
+
+or_a :: proc(cpu: ^CPU, value: u8) {
+    cpu.a |= value
+    set_flags(cpu, cpu.a == 0, false, false, false)
+}
+
+cp_a :: proc(cpu: ^CPU, value: u8) {
+    result := i16(cpu.a) - i16(value)
+    half := i16(cpu.a & 0x0F) - i16(value & 0x0F)
+
+    set_flag_z(cpu, u8(result) == 0)
+    set_flag_n(cpu, true)
+    set_flag_h(cpu, half < 0)
+    set_flag_c(cpu, result < 0)
+}
+
+add_hl :: proc(cpu: ^CPU, value: u16) {
+    hl := get_hl(cpu)
+    result := u32(hl) + u32(value)
+
+    set_flag_n(cpu, false)
+    set_flag_h(cpu, ((hl & 0x0FFF) + (value & 0x0FFF)) > 0x0FFF)
+    set_flag_c(cpu, result > 0xFFFF)
+
+    set_hl(cpu, u16(result))
+}
+
+daa :: proc(cpu: ^CPU) {
+    // Decimal Adjust Accumulator
+    a := cpu.a
+    correction: u8 = 0
+
+    if get_flag_h(cpu) || (!get_flag_n(cpu) && (a & 0x0F) > 9) {
+        correction |= 0x06
     }
 
-    // Service highest priority interrupt
-    // Priority: VBlank > LCD STAT > Timer > Serial > Joypad
-    interrupt_bit: u8
-    vector: u16
+    if get_flag_c(cpu) || (!get_flag_n(cpu) && a > 0x99) {
+        correction |= 0x60
+        set_flag_c(cpu, true)
+    }
 
-    if (pending & 0x01) != 0 {
-        interrupt_bit = 0x01
-        vector = 0x0040  // VBlank
-    } else if (pending & 0x02) != 0 {
-        interrupt_bit = 0x02
-        vector = 0x0048  // LCD STAT
-    } else if (pending & 0x04) != 0 {
-        interrupt_bit = 0x04
-        vector = 0x0050  // Timer
-    } else if (pending & 0x08) != 0 {
-        interrupt_bit = 0x08
-        vector = 0x0058  // Serial
-    } else if (pending & 0x10) != 0 {
-        interrupt_bit = 0x10
-        vector = 0x0060  // Joypad
+    if get_flag_n(cpu) {
+        a -= correction
     } else {
-        return false, if_
+        a += correction
     }
 
-    // Disable interrupts and jump to vector
-    cpu.ime = false
-    cpu.halted = false
-    push16(cpu, cpu.pc)
-    cpu.pc = vector
+    cpu.a = a
+    set_flag_z(cpu, a == 0)
+    set_flag_h(cpu, false)
+}
 
-    // Clear interrupt flag
-    return true, if_ & ~interrupt_bit
+// =============================================================================
+// Interrupt Handling
+// =============================================================================
+
+// Check for pending interrupts, returns info for caller to act on
+// Caller must handle: push PC to stack, set PC to vector, clear IF bit
+check_interrupts :: proc(cpu: ^CPU, ie: u8, if_: u8) -> (pending: bool, vector: u16, interrupt_bit: u8) {
+    // Even with IME=0, interrupts can wake from HALT
+    if cpu.halted && (ie & if_) != 0 {
+        cpu.halted = false
+    }
+
+    if !cpu.ime {
+        return false, 0, 0
+    }
+
+    enabled_pending := ie & if_
+    if enabled_pending == 0 {
+        return false, 0, 0
+    }
+
+    // Return highest priority interrupt
+    // Priority: VBlank > LCD STAT > Timer > Serial > Joypad
+    if (enabled_pending & 0x01) != 0 {
+        return true, 0x0040, 0x01  // VBlank
+    } else if (enabled_pending & 0x02) != 0 {
+        return true, 0x0048, 0x02  // LCD STAT
+    } else if (enabled_pending & 0x04) != 0 {
+        return true, 0x0050, 0x04  // Timer
+    } else if (enabled_pending & 0x08) != 0 {
+        return true, 0x0058, 0x08  // Serial
+    } else if (enabled_pending & 0x10) != 0 {
+        return true, 0x0060, 0x10  // Joypad
+    }
+
+    return false, 0, 0
 }

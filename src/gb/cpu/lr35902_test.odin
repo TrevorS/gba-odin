@@ -460,26 +460,10 @@ test_cp_less_than :: proc(t: ^testing.T) {
 // Interrupt Tests
 // =============================================================================
 
-// Mock memory for interrupt tests
-@(private)
-test_memory: [0x10000]u8
-
-@(private)
-test_read_byte :: proc(addr: u16) -> u8 {
-    return test_memory[addr]
-}
-
-@(private)
-test_write_byte :: proc(addr: u16, value: u8) {
-    test_memory[addr] = value
-}
-
 @(test)
-test_interrupt_service :: proc(t: ^testing.T) {
+test_interrupt_check :: proc(t: ^testing.T) {
     cpu: CPU
     cpu_init_dmg(&cpu)
-    cpu.read_byte = test_read_byte
-    cpu.write_byte = test_write_byte
 
     cpu.ime = true
     cpu.pc = 0x1234
@@ -488,20 +472,17 @@ test_interrupt_service :: proc(t: ^testing.T) {
     ie: u8 = 0x01  // VBlank enabled
     if_: u8 = 0x01  // VBlank requested
 
-    serviced, new_if := handle_interrupts(&cpu, ie, if_)
+    pending, vector, int_bit := check_interrupts(&cpu, ie, if_)
 
-    testing.expect(t, serviced, "Interrupt should be serviced")
-    testing.expect_value(t, new_if, u8(0x00))  // IF bit cleared
-    testing.expect_value(t, cpu.pc, u16(0x0040))  // VBlank vector
-    testing.expect(t, !cpu.ime, "IME should be disabled")
+    testing.expect(t, pending, "Interrupt should be pending")
+    testing.expect_value(t, vector, u16(0x0040))  // VBlank vector
+    testing.expect_value(t, int_bit, u8(0x01))  // VBlank bit
 }
 
 @(test)
 test_interrupt_disabled :: proc(t: ^testing.T) {
     cpu: CPU
     cpu_init_dmg(&cpu)
-    cpu.read_byte = test_read_byte
-    cpu.write_byte = test_write_byte
 
     cpu.ime = false  // Interrupts disabled
     cpu.pc = 0x1234
@@ -509,9 +490,9 @@ test_interrupt_disabled :: proc(t: ^testing.T) {
     ie: u8 = 0x01
     if_: u8 = 0x01
 
-    serviced, _ := handle_interrupts(&cpu, ie, if_)
+    pending, _, _ := check_interrupts(&cpu, ie, if_)
 
-    testing.expect(t, !serviced, "Interrupt should not be serviced when IME=0")
+    testing.expect(t, !pending, "Interrupt should not be pending when IME=0")
     testing.expect_value(t, cpu.pc, u16(0x1234))  // PC unchanged
 }
 
@@ -519,8 +500,6 @@ test_interrupt_disabled :: proc(t: ^testing.T) {
 test_interrupt_priority :: proc(t: ^testing.T) {
     cpu: CPU
     cpu_init_dmg(&cpu)
-    cpu.read_byte = test_read_byte
-    cpu.write_byte = test_write_byte
 
     cpu.ime = true
     cpu.pc = 0x1234
@@ -529,9 +508,26 @@ test_interrupt_priority :: proc(t: ^testing.T) {
     ie: u8 = 0xFF  // All enabled
     if_: u8 = 0x1F  // All requested
 
-    serviced, new_if := handle_interrupts(&cpu, ie, if_)
+    pending, vector, int_bit := check_interrupts(&cpu, ie, if_)
 
-    testing.expect(t, serviced, "Interrupt should be serviced")
-    testing.expect_value(t, new_if, u8(0x1E))  // Only VBlank (bit 0) cleared
-    testing.expect_value(t, cpu.pc, u16(0x0040))  // VBlank vector (highest priority)
+    testing.expect(t, pending, "Interrupt should be pending")
+    testing.expect_value(t, vector, u16(0x0040))  // VBlank vector (highest priority)
+    testing.expect_value(t, int_bit, u8(0x01))  // VBlank bit
+}
+
+@(test)
+test_interrupt_wake_from_halt :: proc(t: ^testing.T) {
+    cpu: CPU
+    cpu_init_dmg(&cpu)
+
+    cpu.ime = false  // IME disabled
+    cpu.halted = true  // CPU is halted
+
+    ie: u8 = 0x01  // VBlank enabled
+    if_: u8 = 0x01  // VBlank requested
+
+    pending, _, _ := check_interrupts(&cpu, ie, if_)
+
+    testing.expect(t, !pending, "Interrupt should not be serviced when IME=0")
+    testing.expect(t, !cpu.halted, "CPU should wake from halt even with IME=0")
 }

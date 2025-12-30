@@ -703,12 +703,13 @@ run_gba :: proc(options: Options) {
         if !display_ok {
             fmt.eprintln("Warning: Failed to initialize display, running headless")
             headless = true
-        } else {
-            defer display_destroy(&display)
         }
     } else {
         // Force headless mode when built without SDL2
         headless = true
+    }
+    if display_ok {
+        defer display_destroy(&display)
     }
 
     // Run emulation

@@ -510,6 +510,7 @@ thumb_hi_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
             cpu.cycles = 1
         }
     case 3: // BX / BLX
+        // BX does NOT apply alignment - bit 0 determines ARM/Thumb state
         // Check for BLX (H1 bit set on ARMv5+, but on ARMv4 it's just BX)
         if h1 {
             // BLX - store return address

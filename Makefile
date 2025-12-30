@@ -39,23 +39,28 @@ test-all: test-gb-cpu test-gb-ppu test-gb-bus test-gba-cpu test-gba-ppu
 # Game Boy tests (81 tests)
 test-gb-cpu:
 	@echo "=== GB CPU Tests (34) ==="
+	@mkdir -p build
 	@odin test src/gb/cpu -out:build/gb_cpu_test
 
 test-gb-ppu:
 	@echo "=== GB PPU Tests (17) ==="
+	@mkdir -p build
 	@odin test src/gb/ppu -out:build/gb_ppu_test
 
 test-gb-bus:
 	@echo "=== GB Bus Tests (30) ==="
+	@mkdir -p build
 	@odin test src/gb/bus -out:build/gb_bus_test
 
 # GBA tests (82 tests)
 test-gba-cpu:
 	@echo "=== GBA CPU Tests (55) ==="
+	@mkdir -p build
 	@odin test src/cpu -out:build/gba_cpu_test
 
 test-gba-ppu:
 	@echo "=== GBA PPU Tests (27) ==="
+	@mkdir -p build
 	@odin test src/ppu -out:build/gba_ppu_test
 
 # =============================================================================

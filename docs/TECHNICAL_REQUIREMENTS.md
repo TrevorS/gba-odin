@@ -1042,7 +1042,34 @@ checksum = (checksum - 0x19) & 0xFF
 
 **REQ-TEST-003**: Phase 1 shall complete BIOS boot sequence and reach ROM entry point (0x08000000).
 
-### 12.2 Instruction Trace Comparison
+### 12.2 Unit Tests
+
+**REQ-TEST-004**: All core components shall have unit tests using Odin's built-in testing framework.
+
+**REQ-TEST-005**: Unit tests shall use the `@(test)` attribute and `core:testing` package.
+
+**REQ-TEST-006**: The following minimum test coverage shall be maintained:
+
+| Component | Minimum Tests | Coverage Areas |
+|-----------|---------------|----------------|
+| GBA CPU (ARM7TDMI) | 55 | Mode switching, flags, conditions, ALU, exceptions |
+| GBA PPU | 27 | Video modes, BGCNT, sprites, OAM |
+| GB CPU (LR35902) | 34 | Registers, flags, interrupts, instruction set |
+| GB PPU | 17 | Modes, timing, STAT/LCDC, palettes |
+| GB Bus | 30 | MBC detection, banking, I/O registers |
+
+**REQ-TEST-007**: Unit tests shall be runnable via `make test` or individual targets:
+- `make test-gba-cpu` - GBA CPU tests
+- `make test-gba-ppu` - GBA PPU tests
+- `make test-gb-cpu` - GB CPU tests
+- `make test-gb-ppu` - GB PPU tests
+- `make test-gb-bus` - GB Bus tests
+
+**REQ-TEST-008**: Test helper functions shall use thread-local storage for test memory to avoid interference between tests.
+
+**REQ-TEST-009**: All tests shall pass before merging changes.
+
+### 12.3 Instruction Trace Comparison
 
 **REQ-TEST-010**: The emulator shall be capable of producing an instruction trace that can be diff'd against mGBA output.
 

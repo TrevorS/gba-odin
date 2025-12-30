@@ -489,24 +489,35 @@ thumb_hi_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
 
     switch op {
     case 0: // ADD
-        result := rd_val + rs_val
-        set_reg(cpu, rd, result)
+        // Per ARM7TDMI: when PC is used as operand, bit 0 is cleared
+        add_rd := rd == 15 ? (rd_val & ~u32(1)) : rd_val
+        add_rs := rs == 15 ? (rs_val & ~u32(1)) : rs_val
+        result := add_rd + add_rs
         if rd == 15 {
+            // ADD Rd=PC: bits [1:0] of result forced to 0 (word-aligned)
+            result &= ~u32(3)
             cpu.cycles = 3
         } else {
             cpu.cycles = 1
         }
+        set_reg(cpu, rd, result)
     case 1: // CMP
-        result, carry, overflow := sub_with_flags(rd_val, rs_val)
+        // Per ARM7TDMI: when PC is used as operand, bit 0 is cleared
+        cmp_rd := rd == 15 ? (rd_val & ~u32(1)) : rd_val
+        cmp_rs := rs == 15 ? (rs_val & ~u32(1)) : rs_val
+        result, carry, overflow := sub_with_flags(cmp_rd, cmp_rs)
         set_nz_flags(cpu, result)
         set_flag_c(cpu, carry)
         set_flag_v(cpu, overflow)
         cpu.cycles = 1
     case 2: // MOV
-        set_reg(cpu, rd, rs_val)
+        // MOV Rd=PC: value written directly, bit 0 ignored for address (stays in THUMB)
+        // Note: In ARMv4T, MOV PC does NOT change state - only BX does
         if rd == 15 {
+            set_pc(cpu, rs_val & ~u32(1))
             cpu.cycles = 3
         } else {
+            set_reg(cpu, rd, rs_val)
             cpu.cycles = 1
         }
     case 3: // BX / BLX
@@ -588,21 +599,38 @@ thumb_ldr_str_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
     case 0b101: // LDRH
         val, c := bus.read16(mem_bus, addr)
         cycles = c
-        set_reg(cpu, rd, u32(val))
+        result := u32(val)
+        // Misaligned LDRH: rotate result right by 8
+        if (addr & 1) != 0 {
+            result = (result >> 8) | (result << 24)
+        }
+        set_reg(cpu, rd, result)
     case 0b110: // LDRB
         val, c := bus.read8(mem_bus, addr)
         cycles = c
         set_reg(cpu, rd, u32(val))
     case 0b111: // LDRSH
-        val, c := bus.read16(mem_bus, addr)
-        cycles = c
-        result: u32 = u32(val)
-        if (val & 0x8000) != 0 {
-            result |= 0xFFFF0000
+        result: u32
+        if (addr & 1) != 0 {
+            // Misaligned: load byte and sign-extend
+            val, c := bus.read8(mem_bus, addr)
+            cycles = c
+            result = u32(val)
+            if (val & 0x80) != 0 {
+                result |= 0xFFFFFF00
+            }
+        } else {
+            // Aligned: load halfword and sign-extend
+            val, c := bus.read16(mem_bus, addr)
+            cycles = c
+            result = u32(val)
+            if (val & 0x8000) != 0 {
+                result |= 0xFFFF0000
+            }
         }
         if thumb_debug_ldst {
-            fmt.printf("  LDRSH: rd=%d rb=%d ro=%d addr=%08X val=%04X result=%08X\n",
-                rd, rb, ro, addr, val, result)
+            fmt.printf("  LDRSH: rd=%d rb=%d ro=%d addr=%08X result=%08X\n",
+                rd, rb, ro, addr, result)
         }
         set_reg(cpu, rd, result)
     }

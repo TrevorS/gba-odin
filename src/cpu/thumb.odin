@@ -579,15 +579,19 @@ thumb_ldr_str_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
     case 0b000: // STR
         cycles = bus.write32(mem_bus, addr, get_reg(cpu, rd))
     case 0b001: // STRH
-        if thumb_debug_ldst {
-            fmt.printf("  STRH: rd=%d rb=%d ro=%d addr=%08X val=%04X\n",
-                rd, rb, ro, addr, u16(get_reg(cpu, rd)))
+        when ODIN_DEBUG {
+            if thumb_debug_ldst {
+                disasm := disassemble_thumb(opcode, context.temp_allocator)
+                fmt.printf("  %s  @ addr=%08X val=%04X\n", disasm, addr, u16(get_reg(cpu, rd)))
+            }
         }
         cycles = bus.write16(mem_bus, addr, u16(get_reg(cpu, rd)))
     case 0b010: // STRB
-        if thumb_debug_ldst {
-            fmt.printf("  STRB: rd=%d rb=%d ro=%d addr=%08X val=%02X\n",
-                rd, rb, ro, addr, u8(get_reg(cpu, rd)))
+        when ODIN_DEBUG {
+            if thumb_debug_ldst {
+                disasm := disassemble_thumb(opcode, context.temp_allocator)
+                fmt.printf("  %s  @ addr=%08X val=%02X\n", disasm, addr, u8(get_reg(cpu, rd)))
+            }
         }
         cycles = bus.write8(mem_bus, addr, u8(get_reg(cpu, rd)))
     case 0b011: // LDRSB
@@ -597,9 +601,11 @@ thumb_ldr_str_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
         if (val & 0x80) != 0 {
             result |= 0xFFFFFF00
         }
-        if thumb_debug_ldst {
-            fmt.printf("  LDRSB: rd=%d rb=%d ro=%d addr=%08X val=%02X result=%08X\n",
-                rd, rb, ro, addr, val, result)
+        when ODIN_DEBUG {
+            if thumb_debug_ldst {
+                disasm := disassemble_thumb(opcode, context.temp_allocator)
+                fmt.printf("  %s  @ addr=%08X val=%02X result=%08X\n", disasm, addr, val, result)
+            }
         }
         set_reg(cpu, rd, result)
     case 0b100: // LDR
@@ -638,9 +644,11 @@ thumb_ldr_str_reg :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
                 result |= 0xFFFF0000
             }
         }
-        if thumb_debug_ldst {
-            fmt.printf("  LDRSH: rd=%d rb=%d ro=%d addr=%08X result=%08X\n",
-                rd, rb, ro, addr, result)
+        when ODIN_DEBUG {
+            if thumb_debug_ldst {
+                disasm := disassemble_thumb(opcode, context.temp_allocator)
+                fmt.printf("  %s  @ addr=%08X result=%08X\n", disasm, addr, result)
+            }
         }
         set_reg(cpu, rd, result)
     }
@@ -674,21 +682,41 @@ thumb_ldr_str_imm :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
         if is_byte {
             val, c := bus.read8(mem_bus, addr)
             cycles = c
+            when ODIN_DEBUG {
+                if thumb_debug_ldst {
+                    disasm := disassemble_thumb(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%02X\n", disasm, addr, val)
+                }
+            }
             set_reg(cpu, rd, u32(val))
         } else {
             val, c := bus.read32(mem_bus, addr)
             cycles = c
+            when ODIN_DEBUG {
+                if thumb_debug_ldst {
+                    disasm := disassemble_thumb(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%08X\n", disasm, addr, val)
+                }
+            }
             set_reg(cpu, rd, val)
         }
     } else {
         value := get_reg(cpu, rd)
         if is_byte {
-            if thumb_debug_ldst {
-                fmt.printf("  STRB(imm): rd=%d rb=%d offset=%d addr=%08X val=%02X\n",
-                    rd, rb, offset, addr, u8(value))
+            when ODIN_DEBUG {
+                if thumb_debug_ldst {
+                    disasm := disassemble_thumb(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%02X\n", disasm, addr, u8(value))
+                }
             }
             cycles = bus.write8(mem_bus, addr, u8(value))
         } else {
+            when ODIN_DEBUG {
+                if thumb_debug_ldst {
+                    disasm := disassemble_thumb(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%08X\n", disasm, addr, value)
+                }
+            }
             cycles = bus.write32(mem_bus, addr, value)
         }
     }

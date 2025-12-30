@@ -808,8 +808,20 @@ arm_single_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
             val, c := bus.read8(mem_bus, addr)
             value = u32(val)
             cycles = c
+            when ODIN_DEBUG {
+                if arm_debug_ldst {
+                    disasm := disassemble_arm(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%02X\n", disasm, addr, val)
+                }
+            }
         } else {
             value, cycles = bus.read32(mem_bus, addr)
+            when ODIN_DEBUG {
+                if arm_debug_ldst {
+                    disasm := disassemble_arm(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%08X\n", disasm, addr, value)
+                }
+            }
         }
         set_reg(cpu, rd, value)
     } else {
@@ -819,12 +831,20 @@ arm_single_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
             value += 4
         }
         if is_byte {
-            if arm_debug_ldst {
-                fmt.printf("  ARM STRB: rd=%d rn=%d addr=%08X val=%02X\n",
-                    rd, rn, addr, u8(value))
+            when ODIN_DEBUG {
+                if arm_debug_ldst {
+                    disasm := disassemble_arm(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%02X\n", disasm, addr, u8(value))
+                }
             }
             cycles = bus.write8(mem_bus, addr, u8(value))
         } else {
+            when ODIN_DEBUG {
+                if arm_debug_ldst {
+                    disasm := disassemble_arm(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%08X\n", disasm, addr, value)
+                }
+            }
             cycles = bus.write32(mem_bus, addr, value)
         }
     }
@@ -900,9 +920,11 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
                 value = (value >> 8) | (value << 24)
             }
             cycles = c
-            if arm_debug_ldst {
-                fmt.printf("  ARM LDRH: rd=%d rn=%d addr=%08X val=%04X result=%08X\n",
-                    rd, rn, addr, val, value)
+            when ODIN_DEBUG {
+                if arm_debug_ldst {
+                    disasm := disassemble_arm(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%04X result=%08X\n", disasm, addr, val, value)
+                }
             }
         case 0b10: // LDRSB
             val, c := bus.read8(mem_bus, addr)
@@ -913,9 +935,11 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
                 value = u32(val)
             }
             cycles = c
-            if arm_debug_ldst {
-                fmt.printf("  ARM LDRSB: rd=%d rn=%d addr=%08X val=%02X result=%08X\n",
-                    rd, rn, addr, val, value)
+            when ODIN_DEBUG {
+                if arm_debug_ldst {
+                    disasm := disassemble_arm(opcode, context.temp_allocator)
+                    fmt.printf("  %s  @ addr=%08X val=%02X result=%08X\n", disasm, addr, val, value)
+                }
             }
         case 0b11: // LDRSH
             // For misaligned LDRSH, act like LDRSB (sign-extend byte)
@@ -927,9 +951,11 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
                     value = u32(val)
                 }
                 cycles = c
-                if arm_debug_ldst {
-                    fmt.printf("  ARM LDRSH (misaligned->LDRSB): rd=%d rn=%d addr=%08X val=%02X result=%08X\n",
-                        rd, rn, addr, val, value)
+                when ODIN_DEBUG {
+                    if arm_debug_ldst {
+                        disasm := disassemble_arm(opcode, context.temp_allocator)
+                        fmt.printf("  %s (misaligned->byte)  @ addr=%08X val=%02X result=%08X\n", disasm, addr, val, value)
+                    }
                 }
             } else {
                 val, c := bus.read16(mem_bus, addr)
@@ -940,9 +966,11 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
                     value = u32(val)
                 }
                 cycles = c
-                if arm_debug_ldst {
-                    fmt.printf("  ARM LDRSH: rd=%d rn=%d addr=%08X val=%04X result=%08X\n",
-                        rd, rn, addr, val, value)
+                when ODIN_DEBUG {
+                    if arm_debug_ldst {
+                        disasm := disassemble_arm(opcode, context.temp_allocator)
+                        fmt.printf("  %s  @ addr=%08X val=%04X result=%08X\n", disasm, addr, val, value)
+                    }
                 }
             }
         }
@@ -950,9 +978,11 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
     } else {
         // Store halfword
         value := get_reg(cpu, rd)
-        if arm_debug_ldst {
-            fmt.printf("  ARM STRH: rd=%d rn=%d addr=%08X val=%04X\n",
-                rd, rn, addr, u16(value))
+        when ODIN_DEBUG {
+            if arm_debug_ldst {
+                disasm := disassemble_arm(opcode, context.temp_allocator)
+                fmt.printf("  %s  @ addr=%08X val=%04X\n", disasm, addr, u16(value))
+            }
         }
         cycles = bus.write16(mem_bus, addr, u16(value))
     }

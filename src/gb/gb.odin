@@ -197,7 +197,10 @@ step :: proc(gb: ^GameBoy) -> u8 {
     }
 
     // Step PPU
-    _, stat_int := ppu.step(&gb.ppu, cycles)
+    vblank, stat_int := ppu.step(&gb.ppu, cycles)
+    if vblank {
+        b.if_ |= 0x01  // VBlank interrupt
+    }
     if stat_int {
         b.if_ |= 0x02
     }

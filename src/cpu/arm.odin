@@ -948,14 +948,16 @@ arm_halfword_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
     }
 
     // Writeback
-    if !pre_indexed {
+    // For loads, don't writeback if rd == rn (loaded value takes precedence)
+    should_writeback := !is_load || rd != rn
+    if !pre_indexed && should_writeback {
         if add_offset {
             base += offset
         } else {
             base -= offset
         }
         set_reg(cpu, rn, base)
-    } else if writeback {
+    } else if writeback && should_writeback {
         set_reg(cpu, rn, addr)
     }
 
@@ -979,7 +981,10 @@ arm_block_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
     rn := u4((opcode >> 16) & 0xF)
     reg_list := u16(opcode & 0xFFFF)
 
-    base := get_reg(cpu, rn)
+    // Get original base for writeback calculation
+    original_base := get_reg(cpu, rn)
+    // LDM/STM force word alignment for actual transfers (ignore lower 2 bits)
+    base := original_base & ~u32(3)
 
     // Count registers
     count: u32 = 0
@@ -989,9 +994,10 @@ arm_block_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
         }
     }
 
-    // Empty list behavior
-    if count == 0 {
-        count = 16 // Store/load r15 and add/sub 0x40
+    // Empty list behavior: transfer PC and adjust base by 0x40
+    empty_list := count == 0
+    if empty_list {
+        count = 16 // Base adjustment is 0x40 (16 * 4)
     }
 
     // Calculate start address based on mode
@@ -1010,12 +1016,12 @@ arm_block_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
         }
     }
 
-    // Calculate final base for writeback
+    // Calculate final base for writeback (uses original unaligned base)
     final_base: u32
     if add_offset {
-        final_base = base + count * 4
+        final_base = original_base + count * 4
     } else {
-        final_base = base - count * 4
+        final_base = original_base - count * 4
     }
 
     // Handle user mode transfer
@@ -1026,26 +1032,54 @@ arm_block_transfer :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
 
     // Transfer registers
     cycles: u8 = 0
-    first := true
-    for i in 0 ..< 16 {
-        if (reg_list & (1 << u16(i))) != 0 {
-            if is_load {
-                value, c := bus.read32(mem_bus, addr)
-                set_reg(cpu, u4(i), value)
-                if first {
-                    cycles = c
-                    first = false
-                }
-            } else {
-                value := get_reg(cpu, u4(i))
-                // First register in list uses old base if writeback
-                c := bus.write32(mem_bus, addr, value)
-                if first {
-                    cycles = c
-                    first = false
-                }
+    if empty_list {
+        // Empty register list: load/store only PC
+        if is_load {
+            value, c := bus.read32(mem_bus, addr)
+            set_reg(cpu, 15, value)
+            cycles = c
+        } else {
+            value := get_reg(cpu, 15) + 4 // Store PC+12
+            cycles = bus.write32(mem_bus, addr, value)
+        }
+    } else {
+        // Find lowest register in list (for base-in-rlist handling)
+        lowest_reg := -1
+        for i in 0 ..< 16 {
+            if (reg_list & (1 << u16(i))) != 0 {
+                lowest_reg = i
+                break
             }
-            addr += 4
+        }
+
+        first := true
+        for i in 0 ..< 16 {
+            if (reg_list & (1 << u16(i))) != 0 {
+                if is_load {
+                    value, c := bus.read32(mem_bus, addr)
+                    set_reg(cpu, u4(i), value)
+                    if first {
+                        cycles = c
+                        first = false
+                    }
+                } else {
+                    value := get_reg(cpu, u4(i))
+                    // STM with PC stores PC+12 (get_reg returns PC+8, add 4 more)
+                    if i == 15 {
+                        value += 4
+                    }
+                    // STM with base in rlist: if base is NOT lowest, store final base value
+                    if writeback && u4(i) == rn && i != lowest_reg {
+                        value = final_base
+                    }
+                    c := bus.write32(mem_bus, addr, value)
+                    if first {
+                        cycles = c
+                        first = false
+                    }
+                }
+                addr += 4
+            }
         }
     }
 

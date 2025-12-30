@@ -320,8 +320,34 @@ texture := sdl2.CreateTexture(renderer, .BGR555, .STREAMING, 240, 160)
 
 ## Testing Strategy
 
+### Unit Tests
+
+The project uses Odin's built-in testing framework (`core:testing`). Tests use the `@(test)` attribute.
+
+```bash
+# Run all 163 unit tests
+make test
+
+# Run individual test suites
+make test-gba-cpu   # GBA CPU tests (55)
+make test-gba-ppu   # GBA PPU tests (27)
+make test-gb-cpu    # GB CPU tests (34)
+make test-gb-ppu    # GB PPU tests (17)
+make test-gb-bus    # GB Bus tests (30)
+```
+
+Test files are co-located with source:
+- `src/cpu/arm7tdmi_test.odin` - GBA CPU tests
+- `src/cpu/thumb_test.odin` - THUMB instruction edge cases
+- `src/ppu/ppu_test.odin` - GBA PPU tests
+- `src/gb/cpu/lr35902_test.odin` - GB CPU tests
+- `src/gb/ppu/ppu_test.odin` - GB PPU tests
+- `src/gb/bus/bus_test.odin` - GB Bus tests
+
 ### Test ROMs (run these regularly)
 
+- **jsmolka arm.gba** — ARM instruction tests (all passing)
+- **jsmolka thumb.gba** — THUMB instruction tests (all passing)
 - **armwrestler** — CPU instruction tests
 - **gba-tests** — CPU, memory timing
 - **tonc demos** — PPU modes, effects

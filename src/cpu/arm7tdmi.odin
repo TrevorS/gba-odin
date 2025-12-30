@@ -1,7 +1,5 @@
 package cpu
 
-import "core:fmt"
-
 // 4-bit register index type
 u4 :: distinct u8
 

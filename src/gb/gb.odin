@@ -136,40 +136,6 @@ pop16 :: #force_inline proc(gb: ^GameBoy) -> u16 {
     return (hi << 8) | lo
 }
 
-// Register pair helpers
-@(private)
-get_hl :: #force_inline proc(c: ^cpu.CPU) -> u16 {
-    return (u16(c.h) << 8) | u16(c.l)
-}
-
-@(private)
-set_hl :: #force_inline proc(c: ^cpu.CPU, val: u16) {
-    c.h = u8(val >> 8)
-    c.l = u8(val)
-}
-
-@(private)
-get_bc :: #force_inline proc(c: ^cpu.CPU) -> u16 {
-    return (u16(c.b) << 8) | u16(c.c)
-}
-
-@(private)
-set_bc :: #force_inline proc(c: ^cpu.CPU, val: u16) {
-    c.b = u8(val >> 8)
-    c.c = u8(val)
-}
-
-@(private)
-get_de :: #force_inline proc(c: ^cpu.CPU) -> u16 {
-    return (u16(c.d) << 8) | u16(c.e)
-}
-
-@(private)
-set_de :: #force_inline proc(c: ^cpu.CPU, val: u16) {
-    c.d = u8(val >> 8)
-    c.e = u8(val)
-}
-
 // Step the system by one CPU instruction
 step :: proc(gb: ^GameBoy) -> u8 {
     c := &gb.cpu
@@ -210,177 +176,24 @@ step :: proc(gb: ^GameBoy) -> u8 {
     return cycles
 }
 
-// Handle interrupts directly using bus (avoids callback issues)
+// Handle interrupts using CPU package helper
 @(private)
 handle_interrupts_direct :: proc(gb: ^GameBoy) -> bool {
     c := &gb.cpu
     b := &gb.bus
 
-    if !c.ime {
-        // Even with IME=0, interrupts can wake from HALT
-        if c.halted && (b.ie & b.if_) != 0 {
-            c.halted = false
-        }
+    // Check for pending interrupts (also handles wake-from-halt)
+    pending, vector, interrupt_bit := cpu.check_interrupts(c, b.ie, b.if_)
+    if !pending {
         return false
     }
 
-    pending := b.ie & b.if_
-    if pending == 0 {
-        return false
-    }
-
-    // Service highest priority interrupt
-    interrupt_bit: u8
-    vector: u16
-
-    if (pending & 0x01) != 0 {
-        interrupt_bit = 0x01
-        vector = 0x0040  // VBlank
-    } else if (pending & 0x02) != 0 {
-        interrupt_bit = 0x02
-        vector = 0x0048  // LCD STAT
-    } else if (pending & 0x04) != 0 {
-        interrupt_bit = 0x04
-        vector = 0x0050  // Timer
-    } else if (pending & 0x08) != 0 {
-        interrupt_bit = 0x08
-        vector = 0x0058  // Serial
-    } else if (pending & 0x10) != 0 {
-        interrupt_bit = 0x10
-        vector = 0x0060  // Joypad
-    } else {
-        return false
-    }
-
-    // Disable interrupts and jump to vector
+    // Service the interrupt: push PC, jump to vector, clear IF bit
     c.ime = false
-    c.halted = false
     push16(gb, c.pc)
     c.pc = vector
-
-    // Clear interrupt flag
     b.if_ &= ~interrupt_bit
     return true
-}
-
-// ALU helpers
-@(private)
-inc8 :: proc(c: ^cpu.CPU, val: u8) -> u8 {
-    result := val + 1
-    c.f = (c.f & 0x10)  // Keep C
-    if result == 0 { c.f |= 0x80 }  // Z
-    if (val & 0x0F) == 0x0F { c.f |= 0x20 }  // H
-    return result
-}
-
-@(private)
-dec8 :: proc(c: ^cpu.CPU, val: u8) -> u8 {
-    result := val - 1
-    c.f = (c.f & 0x10) | 0x40  // Keep C, set N
-    if result == 0 { c.f |= 0x80 }  // Z
-    if (val & 0x0F) == 0 { c.f |= 0x20 }  // H
-    return result
-}
-
-@(private)
-add_a :: proc(c: ^cpu.CPU, val: u8, with_carry: bool) {
-    carry: u8 = 0
-    if with_carry && (c.f & 0x10) != 0 { carry = 1 }
-
-    result := u16(c.a) + u16(val) + u16(carry)
-    half := (c.a & 0x0F) + (val & 0x0F) + carry
-
-    c.f = 0
-    if u8(result) == 0 { c.f |= 0x80 }  // Z
-    if half > 0x0F { c.f |= 0x20 }  // H
-    if result > 0xFF { c.f |= 0x10 }  // C
-
-    c.a = u8(result)
-}
-
-@(private)
-sub_a :: proc(c: ^cpu.CPU, val: u8, with_carry: bool) {
-    carry: u8 = 0
-    if with_carry && (c.f & 0x10) != 0 { carry = 1 }
-
-    result := i16(c.a) - i16(val) - i16(carry)
-    half := i16(c.a & 0x0F) - i16(val & 0x0F) - i16(carry)
-
-    c.f = 0x40  // N
-    if u8(result) == 0 { c.f |= 0x80 }  // Z
-    if half < 0 { c.f |= 0x20 }  // H
-    if result < 0 { c.f |= 0x10 }  // C
-
-    c.a = u8(result)
-}
-
-@(private)
-and_a :: proc(c: ^cpu.CPU, val: u8) {
-    c.a &= val
-    c.f = 0x20  // H
-    if c.a == 0 { c.f |= 0x80 }  // Z
-}
-
-@(private)
-xor_a :: proc(c: ^cpu.CPU, val: u8) {
-    c.a ~= val
-    c.f = 0
-    if c.a == 0 { c.f |= 0x80 }  // Z
-}
-
-@(private)
-or_a :: proc(c: ^cpu.CPU, val: u8) {
-    c.a |= val
-    c.f = 0
-    if c.a == 0 { c.f |= 0x80 }  // Z
-}
-
-@(private)
-cp_a :: proc(c: ^cpu.CPU, val: u8) {
-    result := i16(c.a) - i16(val)
-    half := i16(c.a & 0x0F) - i16(val & 0x0F)
-
-    c.f = 0x40  // N
-    if u8(result) == 0 { c.f |= 0x80 }  // Z
-    if half < 0 { c.f |= 0x20 }  // H
-    if result < 0 { c.f |= 0x10 }  // C
-}
-
-@(private)
-add_hl :: proc(c: ^cpu.CPU, val: u16) {
-    hl := get_hl(c)
-    result := u32(hl) + u32(val)
-
-    c.f &= 0x80  // Keep Z
-    if ((hl & 0x0FFF) + (val & 0x0FFF)) > 0x0FFF { c.f |= 0x20 }  // H
-    if result > 0xFFFF { c.f |= 0x10 }  // C
-
-    set_hl(c, u16(result))
-}
-
-@(private)
-daa :: proc(c: ^cpu.CPU) {
-    a := c.a
-    correction: u8 = 0
-
-    if (c.f & 0x20) != 0 || ((c.f & 0x40) == 0 && (a & 0x0F) > 9) {
-        correction |= 0x06
-    }
-
-    if (c.f & 0x10) != 0 || ((c.f & 0x40) == 0 && a > 0x99) {
-        correction |= 0x60
-        c.f |= 0x10  // C
-    }
-
-    if (c.f & 0x40) != 0 {
-        a -= correction
-    } else {
-        a += correction
-    }
-
-    c.a = a
-    c.f &= 0x50  // Keep N, C
-    if a == 0 { c.f |= 0x80 }  // Z
 }
 
 // Execute main opcode
@@ -395,11 +208,11 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     switch opcode {
     // 0x00-0x0F
     case 0x00: return 4  // NOP
-    case 0x01: set_bc(c, fetch16(gb)); return 12  // LD BC,nn
-    case 0x02: write8(gb, get_bc(c), c.a); return 8  // LD (BC),A
-    case 0x03: set_bc(c, get_bc(c) + 1); return 8  // INC BC
-    case 0x04: c.b = inc8(c, c.b); return 4  // INC B
-    case 0x05: c.b = dec8(c, c.b); return 4  // DEC B
+    case 0x01: cpu.cpu.set_bc(c, fetch16(gb)); return 12  // LD BC,nn
+    case 0x02: write8(gb, cpu.get_bc(c), c.a); return 8  // LD (BC),A
+    case 0x03: cpu.set_bc(c, cpu.get_bc(c) + 1); return 8  // INC BC
+    case 0x04: c.b = cpu.inc8(c, c.b); return 4  // INC B
+    case 0x05: c.b = cpu.dec8(c, c.b); return 4  // DEC B
     case 0x06: c.b = fetch8(gb); return 8  // LD B,n
     case 0x07:  // RLCA
         carry := (c.a & 0x80) != 0
@@ -411,11 +224,11 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         write8(gb, addr, u8(c.sp))
         write8(gb, addr + 1, u8(c.sp >> 8))
         return 20
-    case 0x09: add_hl(c, get_bc(c)); return 8  // ADD HL,BC
-    case 0x0A: c.a = read8(gb, get_bc(c)); return 8  // LD A,(BC)
-    case 0x0B: set_bc(c, get_bc(c) - 1); return 8  // DEC BC
-    case 0x0C: c.c = inc8(c, c.c); return 4  // INC C
-    case 0x0D: c.c = dec8(c, c.c); return 4  // DEC C
+    case 0x09: cpu.add_hl(c, cpu.get_bc(c)); return 8  // ADD HL,BC
+    case 0x0A: c.a = read8(gb, cpu.get_bc(c)); return 8  // LD A,(BC)
+    case 0x0B: cpu.set_bc(c, cpu.get_bc(c) - 1); return 8  // DEC BC
+    case 0x0C: c.c = cpu.inc8(c, c.c); return 4  // INC C
+    case 0x0D: c.c = cpu.dec8(c, c.c); return 4  // DEC C
     case 0x0E: c.c = fetch8(gb); return 8  // LD C,n
     case 0x0F:  // RRCA
         carry := (c.a & 0x01) != 0
@@ -425,11 +238,11 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
 
     // 0x10-0x1F
     case 0x10: fetch8(gb); c.stopped = true; return 4  // STOP
-    case 0x11: set_de(c, fetch16(gb)); return 12  // LD DE,nn
-    case 0x12: write8(gb, get_de(c), c.a); return 8  // LD (DE),A
-    case 0x13: set_de(c, get_de(c) + 1); return 8  // INC DE
-    case 0x14: c.d = inc8(c, c.d); return 4  // INC D
-    case 0x15: c.d = dec8(c, c.d); return 4  // DEC D
+    case 0x11: cpu.set_de(c, fetch16(gb)); return 12  // LD DE,nn
+    case 0x12: write8(gb, cpu.get_de(c), c.a); return 8  // LD (DE),A
+    case 0x13: cpu.set_de(c, cpu.get_de(c) + 1); return 8  // INC DE
+    case 0x14: c.d = cpu.inc8(c, c.d); return 4  // INC D
+    case 0x15: c.d = cpu.dec8(c, c.d); return 4  // DEC D
     case 0x16: c.d = fetch8(gb); return 8  // LD D,n
     case 0x17:  // RLA
         old_carry := (c.f & 0x10) != 0
@@ -441,11 +254,11 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         offset := i8(fetch8(gb))
         c.pc = u16(i32(c.pc) + i32(offset))
         return 12
-    case 0x19: add_hl(c, get_de(c)); return 8  // ADD HL,DE
-    case 0x1A: c.a = read8(gb, get_de(c)); return 8  // LD A,(DE)
-    case 0x1B: set_de(c, get_de(c) - 1); return 8  // DEC DE
-    case 0x1C: c.e = inc8(c, c.e); return 4  // INC E
-    case 0x1D: c.e = dec8(c, c.e); return 4  // DEC E
+    case 0x19: cpu.add_hl(c, cpu.get_de(c)); return 8  // ADD HL,DE
+    case 0x1A: c.a = read8(gb, cpu.get_de(c)); return 8  // LD A,(DE)
+    case 0x1B: cpu.set_de(c, cpu.get_de(c) - 1); return 8  // DEC DE
+    case 0x1C: c.e = cpu.inc8(c, c.e); return 4  // INC E
+    case 0x1D: c.e = cpu.dec8(c, c.e); return 4  // DEC E
     case 0x1E: c.e = fetch8(gb); return 8  // LD E,n
     case 0x1F:  // RRA
         old_carry := (c.f & 0x10) != 0
@@ -462,13 +275,13 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
             return 12
         }
         return 8
-    case 0x21: set_hl(c, fetch16(gb)); return 12  // LD HL,nn
-    case 0x22: write8(gb, get_hl(c), c.a); set_hl(c, get_hl(c) + 1); return 8  // LD (HL+),A
-    case 0x23: set_hl(c, get_hl(c) + 1); return 8  // INC HL
-    case 0x24: c.h = inc8(c, c.h); return 4  // INC H
-    case 0x25: c.h = dec8(c, c.h); return 4  // DEC H
+    case 0x21: cpu.set_hl(c, fetch16(gb)); return 12  // LD HL,nn
+    case 0x22: write8(gb, cpu.get_hl(c), c.a); cpu.set_hl(c, cpu.get_hl(c) + 1); return 8  // LD (HL+),A
+    case 0x23: cpu.set_hl(c, cpu.get_hl(c) + 1); return 8  // INC HL
+    case 0x24: c.h = cpu.inc8(c, c.h); return 4  // INC H
+    case 0x25: c.h = cpu.dec8(c, c.h); return 4  // DEC H
     case 0x26: c.h = fetch8(gb); return 8  // LD H,n
-    case 0x27: daa(c); return 4  // DAA
+    case 0x27: cpu.daa(c); return 4  // DAA
     case 0x28:  // JR Z,n
         offset := i8(fetch8(gb))
         if (c.f & 0x80) != 0 {
@@ -476,11 +289,11 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
             return 12
         }
         return 8
-    case 0x29: add_hl(c, get_hl(c)); return 8  // ADD HL,HL
-    case 0x2A: c.a = read8(gb, get_hl(c)); set_hl(c, get_hl(c) + 1); return 8  // LD A,(HL+)
-    case 0x2B: set_hl(c, get_hl(c) - 1); return 8  // DEC HL
-    case 0x2C: c.l = inc8(c, c.l); return 4  // INC L
-    case 0x2D: c.l = dec8(c, c.l); return 4  // DEC L
+    case 0x29: cpu.add_hl(c, cpu.get_hl(c)); return 8  // ADD HL,HL
+    case 0x2A: c.a = read8(gb, cpu.get_hl(c)); cpu.set_hl(c, cpu.get_hl(c) + 1); return 8  // LD A,(HL+)
+    case 0x2B: cpu.set_hl(c, cpu.get_hl(c) - 1); return 8  // DEC HL
+    case 0x2C: c.l = cpu.inc8(c, c.l); return 4  // INC L
+    case 0x2D: c.l = cpu.dec8(c, c.l); return 4  // DEC L
     case 0x2E: c.l = fetch8(gb); return 8  // LD L,n
     case 0x2F: c.a = ~c.a; c.f |= 0x60; return 4  // CPL
 
@@ -493,11 +306,11 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         }
         return 8
     case 0x31: c.sp = fetch16(gb); return 12  // LD SP,nn
-    case 0x32: write8(gb, get_hl(c), c.a); set_hl(c, get_hl(c) - 1); return 8  // LD (HL-),A
+    case 0x32: write8(gb, cpu.get_hl(c), c.a); cpu.set_hl(c, cpu.get_hl(c) - 1); return 8  // LD (HL-),A
     case 0x33: c.sp += 1; return 8  // INC SP
-    case 0x34: write8(gb, get_hl(c), inc8(c, read8(gb, get_hl(c)))); return 12  // INC (HL)
-    case 0x35: write8(gb, get_hl(c), dec8(c, read8(gb, get_hl(c)))); return 12  // DEC (HL)
-    case 0x36: write8(gb, get_hl(c), fetch8(gb)); return 12  // LD (HL),n
+    case 0x34: write8(gb, cpu.get_hl(c), cpu.inc8(c, read8(gb, cpu.get_hl(c)))); return 12  // INC (HL)
+    case 0x35: write8(gb, cpu.get_hl(c), cpu.dec8(c, read8(gb, cpu.get_hl(c)))); return 12  // DEC (HL)
+    case 0x36: write8(gb, cpu.get_hl(c), fetch8(gb)); return 12  // LD (HL),n
     case 0x37: c.f = (c.f & 0x80) | 0x10; return 4  // SCF
     case 0x38:  // JR C,n
         offset := i8(fetch8(gb))
@@ -506,11 +319,11 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
             return 12
         }
         return 8
-    case 0x39: add_hl(c, c.sp); return 8  // ADD HL,SP
-    case 0x3A: c.a = read8(gb, get_hl(c)); set_hl(c, get_hl(c) - 1); return 8  // LD A,(HL-)
+    case 0x39: cpu.add_hl(c, c.sp); return 8  // ADD HL,SP
+    case 0x3A: c.a = read8(gb, cpu.get_hl(c)); cpu.set_hl(c, cpu.get_hl(c) - 1); return 8  // LD A,(HL-)
     case 0x3B: c.sp -= 1; return 8  // DEC SP
-    case 0x3C: c.a = inc8(c, c.a); return 4  // INC A
-    case 0x3D: c.a = dec8(c, c.a); return 4  // DEC A
+    case 0x3C: c.a = cpu.inc8(c, c.a); return 4  // INC A
+    case 0x3D: c.a = cpu.dec8(c, c.a); return 4  // DEC A
     case 0x3E: c.a = fetch8(gb); return 8  // LD A,n
     case 0x3F: c.f = (c.f & 0x90) ~ 0x10; return 4  // CCF - toggle C, clear N/H, keep Z
 
@@ -521,7 +334,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0x43: c.b = c.e; return 4
     case 0x44: c.b = c.h; return 4
     case 0x45: c.b = c.l; return 4
-    case 0x46: c.b = read8(gb, get_hl(c)); return 8
+    case 0x46: c.b = read8(gb, cpu.get_hl(c)); return 8
     case 0x47: c.b = c.a; return 4
     case 0x48: c.c = c.b; return 4
     case 0x49: return 4  // LD C,C
@@ -529,7 +342,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0x4B: c.c = c.e; return 4
     case 0x4C: c.c = c.h; return 4
     case 0x4D: c.c = c.l; return 4
-    case 0x4E: c.c = read8(gb, get_hl(c)); return 8
+    case 0x4E: c.c = read8(gb, cpu.get_hl(c)); return 8
     case 0x4F: c.c = c.a; return 4
     case 0x50: c.d = c.b; return 4
     case 0x51: c.d = c.c; return 4
@@ -537,7 +350,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0x53: c.d = c.e; return 4
     case 0x54: c.d = c.h; return 4
     case 0x55: c.d = c.l; return 4
-    case 0x56: c.d = read8(gb, get_hl(c)); return 8
+    case 0x56: c.d = read8(gb, cpu.get_hl(c)); return 8
     case 0x57: c.d = c.a; return 4
     case 0x58: c.e = c.b; return 4
     case 0x59: c.e = c.c; return 4
@@ -545,7 +358,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0x5B: return 4  // LD E,E
     case 0x5C: c.e = c.h; return 4
     case 0x5D: c.e = c.l; return 4
-    case 0x5E: c.e = read8(gb, get_hl(c)); return 8
+    case 0x5E: c.e = read8(gb, cpu.get_hl(c)); return 8
     case 0x5F: c.e = c.a; return 4
     case 0x60: c.h = c.b; return 4
     case 0x61: c.h = c.c; return 4
@@ -553,7 +366,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0x63: c.h = c.e; return 4
     case 0x64: return 4  // LD H,H
     case 0x65: c.h = c.l; return 4
-    case 0x66: c.h = read8(gb, get_hl(c)); return 8
+    case 0x66: c.h = read8(gb, cpu.get_hl(c)); return 8
     case 0x67: c.h = c.a; return 4
     case 0x68: c.l = c.b; return 4
     case 0x69: c.l = c.c; return 4
@@ -561,96 +374,96 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0x6B: c.l = c.e; return 4
     case 0x6C: c.l = c.h; return 4
     case 0x6D: return 4  // LD L,L
-    case 0x6E: c.l = read8(gb, get_hl(c)); return 8
+    case 0x6E: c.l = read8(gb, cpu.get_hl(c)); return 8
     case 0x6F: c.l = c.a; return 4
-    case 0x70: write8(gb, get_hl(c), c.b); return 8
-    case 0x71: write8(gb, get_hl(c), c.c); return 8
-    case 0x72: write8(gb, get_hl(c), c.d); return 8
-    case 0x73: write8(gb, get_hl(c), c.e); return 8
-    case 0x74: write8(gb, get_hl(c), c.h); return 8
-    case 0x75: write8(gb, get_hl(c), c.l); return 8
+    case 0x70: write8(gb, cpu.get_hl(c), c.b); return 8
+    case 0x71: write8(gb, cpu.get_hl(c), c.c); return 8
+    case 0x72: write8(gb, cpu.get_hl(c), c.d); return 8
+    case 0x73: write8(gb, cpu.get_hl(c), c.e); return 8
+    case 0x74: write8(gb, cpu.get_hl(c), c.h); return 8
+    case 0x75: write8(gb, cpu.get_hl(c), c.l); return 8
     case 0x76: c.halted = true; return 4  // HALT
-    case 0x77: write8(gb, get_hl(c), c.a); return 8
+    case 0x77: write8(gb, cpu.get_hl(c), c.a); return 8
     case 0x78: c.a = c.b; return 4
     case 0x79: c.a = c.c; return 4
     case 0x7A: c.a = c.d; return 4
     case 0x7B: c.a = c.e; return 4
     case 0x7C: c.a = c.h; return 4
     case 0x7D: c.a = c.l; return 4
-    case 0x7E: c.a = read8(gb, get_hl(c)); return 8
+    case 0x7E: c.a = read8(gb, cpu.get_hl(c)); return 8
     case 0x7F: return 4  // LD A,A
 
     // 0x80-0xBF: ALU operations
-    case 0x80: add_a(c, c.b, false); return 4
-    case 0x81: add_a(c, c.c, false); return 4
-    case 0x82: add_a(c, c.d, false); return 4
-    case 0x83: add_a(c, c.e, false); return 4
-    case 0x84: add_a(c, c.h, false); return 4
-    case 0x85: add_a(c, c.l, false); return 4
-    case 0x86: add_a(c, read8(gb, get_hl(c)), false); return 8
-    case 0x87: add_a(c, c.a, false); return 4
-    case 0x88: add_a(c, c.b, true); return 4
-    case 0x89: add_a(c, c.c, true); return 4
-    case 0x8A: add_a(c, c.d, true); return 4
-    case 0x8B: add_a(c, c.e, true); return 4
-    case 0x8C: add_a(c, c.h, true); return 4
-    case 0x8D: add_a(c, c.l, true); return 4
-    case 0x8E: add_a(c, read8(gb, get_hl(c)), true); return 8
-    case 0x8F: add_a(c, c.a, true); return 4
-    case 0x90: sub_a(c, c.b, false); return 4
-    case 0x91: sub_a(c, c.c, false); return 4
-    case 0x92: sub_a(c, c.d, false); return 4
-    case 0x93: sub_a(c, c.e, false); return 4
-    case 0x94: sub_a(c, c.h, false); return 4
-    case 0x95: sub_a(c, c.l, false); return 4
-    case 0x96: sub_a(c, read8(gb, get_hl(c)), false); return 8
-    case 0x97: sub_a(c, c.a, false); return 4
-    case 0x98: sub_a(c, c.b, true); return 4
-    case 0x99: sub_a(c, c.c, true); return 4
-    case 0x9A: sub_a(c, c.d, true); return 4
-    case 0x9B: sub_a(c, c.e, true); return 4
-    case 0x9C: sub_a(c, c.h, true); return 4
-    case 0x9D: sub_a(c, c.l, true); return 4
-    case 0x9E: sub_a(c, read8(gb, get_hl(c)), true); return 8
-    case 0x9F: sub_a(c, c.a, true); return 4
-    case 0xA0: and_a(c, c.b); return 4
-    case 0xA1: and_a(c, c.c); return 4
-    case 0xA2: and_a(c, c.d); return 4
-    case 0xA3: and_a(c, c.e); return 4
-    case 0xA4: and_a(c, c.h); return 4
-    case 0xA5: and_a(c, c.l); return 4
-    case 0xA6: and_a(c, read8(gb, get_hl(c))); return 8
-    case 0xA7: and_a(c, c.a); return 4
-    case 0xA8: xor_a(c, c.b); return 4
-    case 0xA9: xor_a(c, c.c); return 4
-    case 0xAA: xor_a(c, c.d); return 4
-    case 0xAB: xor_a(c, c.e); return 4
-    case 0xAC: xor_a(c, c.h); return 4
-    case 0xAD: xor_a(c, c.l); return 4
-    case 0xAE: xor_a(c, read8(gb, get_hl(c))); return 8
-    case 0xAF: xor_a(c, c.a); return 4
-    case 0xB0: or_a(c, c.b); return 4
-    case 0xB1: or_a(c, c.c); return 4
-    case 0xB2: or_a(c, c.d); return 4
-    case 0xB3: or_a(c, c.e); return 4
-    case 0xB4: or_a(c, c.h); return 4
-    case 0xB5: or_a(c, c.l); return 4
-    case 0xB6: or_a(c, read8(gb, get_hl(c))); return 8
-    case 0xB7: or_a(c, c.a); return 4
-    case 0xB8: cp_a(c, c.b); return 4
-    case 0xB9: cp_a(c, c.c); return 4
-    case 0xBA: cp_a(c, c.d); return 4
-    case 0xBB: cp_a(c, c.e); return 4
-    case 0xBC: cp_a(c, c.h); return 4
-    case 0xBD: cp_a(c, c.l); return 4
-    case 0xBE: cp_a(c, read8(gb, get_hl(c))); return 8
-    case 0xBF: cp_a(c, c.a); return 4
+    case 0x80: cpu.add_a(c, c.b, false); return 4
+    case 0x81: cpu.add_a(c, c.c, false); return 4
+    case 0x82: cpu.add_a(c, c.d, false); return 4
+    case 0x83: cpu.add_a(c, c.e, false); return 4
+    case 0x84: cpu.add_a(c, c.h, false); return 4
+    case 0x85: cpu.add_a(c, c.l, false); return 4
+    case 0x86: cpu.add_a(c, read8(gb, cpu.get_hl(c)), false); return 8
+    case 0x87: cpu.add_a(c, c.a, false); return 4
+    case 0x88: cpu.add_a(c, c.b, true); return 4
+    case 0x89: cpu.add_a(c, c.c, true); return 4
+    case 0x8A: cpu.add_a(c, c.d, true); return 4
+    case 0x8B: cpu.add_a(c, c.e, true); return 4
+    case 0x8C: cpu.add_a(c, c.h, true); return 4
+    case 0x8D: cpu.add_a(c, c.l, true); return 4
+    case 0x8E: cpu.add_a(c, read8(gb, cpu.get_hl(c)), true); return 8
+    case 0x8F: cpu.add_a(c, c.a, true); return 4
+    case 0x90: cpu.sub_a(c, c.b, false); return 4
+    case 0x91: cpu.sub_a(c, c.c, false); return 4
+    case 0x92: cpu.sub_a(c, c.d, false); return 4
+    case 0x93: cpu.sub_a(c, c.e, false); return 4
+    case 0x94: cpu.sub_a(c, c.h, false); return 4
+    case 0x95: cpu.sub_a(c, c.l, false); return 4
+    case 0x96: cpu.sub_a(c, read8(gb, cpu.get_hl(c)), false); return 8
+    case 0x97: cpu.sub_a(c, c.a, false); return 4
+    case 0x98: cpu.sub_a(c, c.b, true); return 4
+    case 0x99: cpu.sub_a(c, c.c, true); return 4
+    case 0x9A: cpu.sub_a(c, c.d, true); return 4
+    case 0x9B: cpu.sub_a(c, c.e, true); return 4
+    case 0x9C: cpu.sub_a(c, c.h, true); return 4
+    case 0x9D: cpu.sub_a(c, c.l, true); return 4
+    case 0x9E: cpu.sub_a(c, read8(gb, cpu.get_hl(c)), true); return 8
+    case 0x9F: cpu.sub_a(c, c.a, true); return 4
+    case 0xA0: cpu.and_a(c, c.b); return 4
+    case 0xA1: cpu.and_a(c, c.c); return 4
+    case 0xA2: cpu.and_a(c, c.d); return 4
+    case 0xA3: cpu.and_a(c, c.e); return 4
+    case 0xA4: cpu.and_a(c, c.h); return 4
+    case 0xA5: cpu.and_a(c, c.l); return 4
+    case 0xA6: cpu.and_a(c, read8(gb, cpu.get_hl(c))); return 8
+    case 0xA7: cpu.and_a(c, c.a); return 4
+    case 0xA8: cpu.xcpu.or_a(c, c.b); return 4
+    case 0xA9: cpu.xcpu.or_a(c, c.c); return 4
+    case 0xAA: cpu.xcpu.or_a(c, c.d); return 4
+    case 0xAB: cpu.xcpu.or_a(c, c.e); return 4
+    case 0xAC: cpu.xcpu.or_a(c, c.h); return 4
+    case 0xAD: cpu.xcpu.or_a(c, c.l); return 4
+    case 0xAE: cpu.xcpu.or_a(c, read8(gb, cpu.get_hl(c))); return 8
+    case 0xAF: cpu.xcpu.or_a(c, c.a); return 4
+    case 0xB0: cpu.or_a(c, c.b); return 4
+    case 0xB1: cpu.or_a(c, c.c); return 4
+    case 0xB2: cpu.or_a(c, c.d); return 4
+    case 0xB3: cpu.or_a(c, c.e); return 4
+    case 0xB4: cpu.or_a(c, c.h); return 4
+    case 0xB5: cpu.or_a(c, c.l); return 4
+    case 0xB6: cpu.or_a(c, read8(gb, cpu.get_hl(c))); return 8
+    case 0xB7: cpu.or_a(c, c.a); return 4
+    case 0xB8: cpu.cp_a(c, c.b); return 4
+    case 0xB9: cpu.cp_a(c, c.c); return 4
+    case 0xBA: cpu.cp_a(c, c.d); return 4
+    case 0xBB: cpu.cp_a(c, c.e); return 4
+    case 0xBC: cpu.cp_a(c, c.h); return 4
+    case 0xBD: cpu.cp_a(c, c.l); return 4
+    case 0xBE: cpu.cp_a(c, read8(gb, cpu.get_hl(c))); return 8
+    case 0xBF: cpu.cp_a(c, c.a); return 4
 
     // 0xC0-0xFF: Control, stack, misc
     case 0xC0:  // RET NZ
         if (c.f & 0x80) == 0 { c.pc = pop16(gb); return 20 }
         return 8
-    case 0xC1: set_bc(c, pop16(gb)); return 12  // POP BC
+    case 0xC1: cpu.set_bc(c, pop16(gb)); return 12  // POP BC
     case 0xC2:  // JP NZ,nn
         addr := fetch16(gb)
         if (c.f & 0x80) == 0 { c.pc = addr; return 16 }
@@ -660,8 +473,8 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         addr := fetch16(gb)
         if (c.f & 0x80) == 0 { push16(gb, c.pc); c.pc = addr; return 24 }
         return 12
-    case 0xC5: push16(gb, get_bc(c)); return 16  // PUSH BC
-    case 0xC6: add_a(c, fetch8(gb), false); return 8  // ADD A,n
+    case 0xC5: push16(gb, cpu.get_bc(c)); return 16  // PUSH BC
+    case 0xC6: cpu.add_a(c, fetch8(gb), false); return 8  // ADD A,n
     case 0xC7: push16(gb, c.pc); c.pc = 0x00; return 16  // RST 00
     case 0xC8:  // RET Z
         if (c.f & 0x80) != 0 { c.pc = pop16(gb); return 20 }
@@ -681,12 +494,12 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         push16(gb, c.pc)
         c.pc = addr
         return 24
-    case 0xCE: add_a(c, fetch8(gb), true); return 8  // ADC A,n
+    case 0xCE: cpu.add_a(c, fetch8(gb), true); return 8  // ADC A,n
     case 0xCF: push16(gb, c.pc); c.pc = 0x08; return 16  // RST 08
     case 0xD0:  // RET NC
         if (c.f & 0x10) == 0 { c.pc = pop16(gb); return 20 }
         return 8
-    case 0xD1: set_de(c, pop16(gb)); return 12  // POP DE
+    case 0xD1: cpu.set_de(c, pop16(gb)); return 12  // POP DE
     case 0xD2:  // JP NC,nn
         addr := fetch16(gb)
         if (c.f & 0x10) == 0 { c.pc = addr; return 16 }
@@ -696,8 +509,8 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         addr := fetch16(gb)
         if (c.f & 0x10) == 0 { push16(gb, c.pc); c.pc = addr; return 24 }
         return 12
-    case 0xD5: push16(gb, get_de(c)); return 16  // PUSH DE
-    case 0xD6: sub_a(c, fetch8(gb), false); return 8  // SUB n
+    case 0xD5: push16(gb, cpu.get_de(c)); return 16  // PUSH DE
+    case 0xD6: cpu.sub_a(c, fetch8(gb), false); return 8  // SUB n
     case 0xD7: push16(gb, c.pc); c.pc = 0x10; return 16  // RST 10
     case 0xD8:  // RET C
         if (c.f & 0x10) != 0 { c.pc = pop16(gb); return 20 }
@@ -713,14 +526,14 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         if (c.f & 0x10) != 0 { push16(gb, c.pc); c.pc = addr; return 24 }
         return 12
     // 0xDD illegal
-    case 0xDE: sub_a(c, fetch8(gb), true); return 8  // SBC A,n
+    case 0xDE: cpu.sub_a(c, fetch8(gb), true); return 8  // SBC A,n
     case 0xDF: push16(gb, c.pc); c.pc = 0x18; return 16  // RST 18
     case 0xE0: write8(gb, 0xFF00 + u16(fetch8(gb)), c.a); return 12  // LD (FF00+n),A
-    case 0xE1: set_hl(c, pop16(gb)); return 12  // POP HL
+    case 0xE1: cpu.set_hl(c, pop16(gb)); return 12  // POP HL
     case 0xE2: write8(gb, 0xFF00 + u16(c.c), c.a); return 8  // LD (FF00+C),A
     // 0xE3, 0xE4 illegal
-    case 0xE5: push16(gb, get_hl(c)); return 16  // PUSH HL
-    case 0xE6: and_a(c, fetch8(gb)); return 8  // AND n
+    case 0xE5: push16(gb, cpu.get_hl(c)); return 16  // PUSH HL
+    case 0xE6: cpu.and_a(c, fetch8(gb)); return 8  // AND n
     case 0xE7: push16(gb, c.pc); c.pc = 0x20; return 16  // RST 20
     case 0xE8:  // ADD SP,n
         offset := i8(fetch8(gb))
@@ -730,10 +543,10 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         if ((c.sp & 0xFF) + u16(u8(offset))) > 0xFF { c.f |= 0x10 }
         c.sp = result
         return 16
-    case 0xE9: c.pc = get_hl(c); return 4  // JP HL
+    case 0xE9: c.pc = cpu.get_hl(c); return 4  // JP HL
     case 0xEA: write8(gb, fetch16(gb), c.a); return 16  // LD (nn),A
     // 0xEB, 0xEC, 0xED illegal
-    case 0xEE: xor_a(c, fetch8(gb)); return 8  // XOR n
+    case 0xEE: cpu.xcpu.or_a(c, fetch8(gb)); return 8  // XOR n
     case 0xEF: push16(gb, c.pc); c.pc = 0x28; return 16  // RST 28
     case 0xF0: c.a = read8(gb, 0xFF00 + u16(fetch8(gb))); return 12  // LD A,(FF00+n)
     case 0xF1:  // POP AF
@@ -745,7 +558,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0xF3: c.ime = false; return 4  // DI
     // 0xF4 illegal
     case 0xF5: push16(gb, (u16(c.a) << 8) | u16(c.f)); return 16  // PUSH AF
-    case 0xF6: or_a(c, fetch8(gb)); return 8  // OR n
+    case 0xF6: cpu.or_a(c, fetch8(gb)); return 8  // OR n
     case 0xF7: push16(gb, c.pc); c.pc = 0x30; return 16  // RST 30
     case 0xF8:  // LD HL,SP+n
         offset := i8(fetch8(gb))
@@ -753,13 +566,13 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
         c.f = 0
         if ((c.sp & 0x0F) + (u16(u8(offset)) & 0x0F)) > 0x0F { c.f |= 0x20 }
         if ((c.sp & 0xFF) + u16(u8(offset))) > 0xFF { c.f |= 0x10 }
-        set_hl(c, result)
+        cpu.set_hl(c, result)
         return 12
-    case 0xF9: c.sp = get_hl(c); return 8  // LD SP,HL
+    case 0xF9: c.sp = cpu.get_hl(c); return 8  // LD SP,HL
     case 0xFA: c.a = read8(gb, fetch16(gb)); return 16  // LD A,(nn)
     case 0xFB: c.ime_scheduled = true; return 4  // EI
     // 0xFC, 0xFD illegal
-    case 0xFE: cp_a(c, fetch8(gb)); return 8  // CP n
+    case 0xFE: cpu.cp_a(c, fetch8(gb)); return 8  // CP n
     case 0xFF: push16(gb, c.pc); c.pc = 0x38; return 16  // RST 38
 
     case: return 4  // Illegal - NOP
@@ -864,7 +677,7 @@ get_reg :: proc(gb: ^GameBoy, idx: u8) -> u8 {
     case 3: return c.e
     case 4: return c.h
     case 5: return c.l
-    case 6: return read8(gb, get_hl(c))
+    case 6: return read8(gb, cpu.get_hl(c))
     case 7: return c.a
     }
     return 0
@@ -881,7 +694,7 @@ set_reg :: proc(gb: ^GameBoy, idx: u8, val: u8) {
     case 3: c.e = val
     case 4: c.h = val
     case 5: c.l = val
-    case 6: write8(gb, get_hl(c), val)
+    case 6: write8(gb, cpu.get_hl(c), val)
     case 7: c.a = val
     }
 }

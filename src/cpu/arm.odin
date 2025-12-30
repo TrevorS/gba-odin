@@ -3,8 +3,9 @@ package cpu
 import "../bus"
 import "core:fmt"
 
-// Debug flag for ARM load/store (enable for debugging)
-arm_debug_ldst := false
+// Debug flags (enable for debugging)
+arm_debug_ldst := false   // Trace load/store operations
+arm_trace := false        // Trace all instructions with disassembly
 
 // ARM instruction handler type
 ARM_Handler :: #type proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32)
@@ -116,6 +117,15 @@ decode_arm_instruction :: proc "contextless" (bits_27_20: u32, bits_7_4: u32) ->
 
 // Execute ARM instruction
 execute_arm :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32) {
+    // Trace instruction if enabled
+    when ODIN_DEBUG {
+        if arm_trace {
+            pc := cpu.regs[15] - 8  // PC points 2 instructions ahead
+            disasm := disassemble_arm(opcode, context.temp_allocator)
+            fmt.printf("[ARM] %08X: %08X  %s\n", pc, opcode, disasm)
+        }
+    }
+
     // Check condition
     condition := get_condition_code(opcode)
     if !check_condition(cpu, condition) {

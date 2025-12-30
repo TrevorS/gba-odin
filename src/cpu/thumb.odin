@@ -3,8 +3,9 @@ package cpu
 import "../bus"
 import "core:fmt"
 
-// Debug flag for tracing load/store operations (enable for debugging)
-thumb_debug_ldst := false
+// Debug flags (enable for debugging)
+thumb_debug_ldst := false   // Trace load/store operations
+thumb_trace := false        // Trace all instructions with disassembly
 
 // Thumb instruction handler type
 Thumb_Handler :: #type proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16)
@@ -150,6 +151,15 @@ decode_thumb_instruction :: proc "contextless" (upper: u8) -> Thumb_Handler {
 
 // Execute Thumb instruction
 execute_thumb :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
+    // Trace instruction if enabled
+    when ODIN_DEBUG {
+        if thumb_trace {
+            pc := cpu.regs[15] - 4  // PC points 2 instructions ahead
+            disasm := disassemble_thumb(opcode, context.temp_allocator)
+            fmt.printf("[THUMB] %08X: %04X  %s\n", pc, opcode, disasm)
+        }
+    }
+
     index := opcode >> 8
     handler := thumb_lut[index]
     handler(cpu, mem_bus, opcode)

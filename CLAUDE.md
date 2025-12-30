@@ -56,7 +56,9 @@ gba-odin/
 │   │   ├── arm7tdmi.odin       # CPU state and core logic
 │   │   ├── arm7tdmi_test.odin  # CPU unit tests (46 tests)
 │   │   ├── arm.odin            # ARM instruction handlers
+│   │   ├── arm_opcodes.odin    # ARM opcode metadata and disassembly
 │   │   ├── thumb.odin          # THUMB instruction handlers
+│   │   ├── thumb_opcodes.odin  # THUMB opcode metadata and disassembly
 │   │   ├── thumb_test.odin     # THUMB instruction tests (9 tests)
 │   │   ├── conditions.odin     # Condition evaluation LUT
 │   │   └── bios_hle.odin       # BIOS high-level emulation
@@ -70,7 +72,8 @@ gba-odin/
 │       ├── gb.odin         # GB system orchestration
 │       ├── cpu/
 │       │   ├── lr35902.odin      # GB CPU (LR35902/SM83)
-│       │   └── lr35902_test.odin # GB CPU tests (34 tests)
+│       │   ├── lr35902_test.odin # GB CPU tests (34 tests)
+│       │   └── opcodes.odin      # Opcode metadata (disassembly, debugging)
 │       ├── bus/
 │       │   ├── bus.odin          # GB memory bus, MBC support
 │       │   └── bus_test.odin     # GB Bus tests (30 tests)

@@ -1,0 +1,17 @@
+{
+  "odin": {
+    "command": "ols",
+    "args": [],
+    "extensionToLanguage": {
+      ".odin": "odin"
+    },
+    "transport": "stdio",
+    "env": {},
+    "initializationOptions": {},
+    "settings": {},
+    "startupTimeout": 10000,
+    "shutdownTimeout": 3000,
+    "restartOnCrash": true,
+    "maxRestarts": 3
+  }
+}

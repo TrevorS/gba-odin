@@ -645,9 +645,9 @@ run_gameboy :: proc(options: Options, rom_data: []u8, is_cgb: bool) {
 
 // Run GBA emulator
 run_gba :: proc(options: Options) {
-    // GBA requires BIOS
-    if options.bios_path == "" {
-        fmt.eprintln("Error: BIOS path is required for GBA (use --bios)")
+    // GBA requires BIOS unless --skip-bios is used
+    if options.bios_path == "" && !options.skip_bios {
+        fmt.eprintln("Error: BIOS path is required for GBA (use --bios or --skip-bios)")
         os.exit(1)
     }
 
@@ -661,12 +661,16 @@ run_gba :: proc(options: Options) {
 
     gba.log_level = options.log_level
 
-    // Load BIOS
-    fmt.println("Loading BIOS:", options.bios_path)
-    if !gba_load_bios(&gba, options.bios_path) {
-        os.exit(1)
+    // Load BIOS (unless skip_bios with no bios_path)
+    if options.bios_path != "" {
+        fmt.println("Loading BIOS:", options.bios_path)
+        if !gba_load_bios(&gba, options.bios_path) {
+            os.exit(1)
+        }
+        fmt.println("BIOS loaded successfully")
+    } else if options.skip_bios {
+        fmt.println("Running without BIOS (skip-bios mode)")
     }
-    fmt.println("BIOS loaded successfully")
 
     // Load ROM
     fmt.println()

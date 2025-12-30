@@ -48,8 +48,9 @@ init_condition_lut :: proc "contextless" () {
                 result = z || (n != v)
             case 0xE: // AL - Always
                 result = true
-            case 0xF: // NV - Never (treat as unconditional on ARMv4T)
-                result = true
+            case 0xF: // NV - Never (ARMv4T: never execute, ARMv5+: unconditional)
+                // GBA uses ARMv4T, so this should never execute
+                result = false
             case:
                 result = false
             }

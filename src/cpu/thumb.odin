@@ -703,7 +703,12 @@ thumb_ldrh_strh_imm :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
     if is_load {
         val, c := bus.read16(mem_bus, addr)
         cycles = c
-        set_reg(cpu, rd, u32(val))
+        result := u32(val)
+        // Misaligned LDRH: rotate result right by 8
+        if (addr & 1) != 0 {
+            result = (result >> 8) | (result << 24)
+        }
+        set_reg(cpu, rd, result)
     } else {
         cycles = bus.write16(mem_bus, addr, u16(get_reg(cpu, rd)))
     }
@@ -815,8 +820,8 @@ thumb_push_pop :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
             if cycles == 0 {
                 cycles = c
             }
-            // Pop to PC, check for ARM/Thumb switch
-            set_thumb(cpu, (val & 1) != 0)
+            // ARMv4T: POP {PC} does NOT switch modes (only BX does)
+            // Just load PC, keep current THUMB state
             set_pc(cpu, val & ~u32(1))
             sp += 4
         }
@@ -867,18 +872,30 @@ thumb_ldm_stm :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
         }
     }
 
-    // Empty list: weird behavior (store/load r15, add 0x40)
+    // Empty list: weird ARMv4 behavior (store/load r15, add 0x40)
+    // STM stores PC+6 (current instruction + 6), LDM loads to PC
     if count == 0 {
         if is_load {
             val, c := bus.read32(mem_bus, addr)
             set_pc(cpu, val)
             cycles = c
         } else {
-            bus.write32(mem_bus, addr, cpu.regs[15] + 4)
+            // Store PC+6 for THUMB mode (PC+12 for ARM mode)
+            bus.write32(mem_bus, addr, cpu.regs[15] + 6)
         }
         set_reg(cpu, rb, addr + 0x40)
         cpu.cycles = 3
         return
+    }
+
+    // Pre-calculate final address for STM base-in-rlist handling
+    final_addr := addr + (count * 4)
+    rb_is_first := false
+    for i in 0 ..< 8 {
+        if (reg_list & (1 << u8(i))) != 0 {
+            rb_is_first = (u4(i) == rb)
+            break
+        }
     }
 
     for i in 0 ..< 8 {
@@ -891,7 +908,14 @@ thumb_ldm_stm :: proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16) {
                 }
                 set_reg(cpu, u4(i), val)
             } else {
-                c := bus.write32(mem_bus, addr, get_reg(cpu, u4(i)))
+                // For STM: if rb is in list but not first, store writeback value
+                value: u32
+                if u4(i) == rb && !rb_is_first {
+                    value = final_addr
+                } else {
+                    value = get_reg(cpu, u4(i))
+                }
+                c := bus.write32(mem_bus, addr, value)
                 if first {
                     cycles = c
                     first = false

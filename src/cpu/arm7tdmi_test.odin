@@ -771,6 +771,30 @@ test_condition_al :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_condition_nv :: proc(t: ^testing.T) {
+    cpu: CPU
+    cpu_init(&cpu)
+
+    // NV (0xF): Never execute on ARMv4T (GBA)
+    // On ARMv5+, this would be unconditional, but GBA uses ARMv4T
+    testing.expect(t, !check_condition(&cpu, 0xF), "NV should never pass on ARMv4T")
+
+    // Even with all flags set, NV should never execute
+    set_flag_n(&cpu, true)
+    set_flag_z(&cpu, true)
+    set_flag_c(&cpu, true)
+    set_flag_v(&cpu, true)
+    testing.expect(t, !check_condition(&cpu, 0xF), "NV should never pass regardless of flags")
+
+    // Even with all flags clear, NV should never execute
+    set_flag_n(&cpu, false)
+    set_flag_z(&cpu, false)
+    set_flag_c(&cpu, false)
+    set_flag_v(&cpu, false)
+    testing.expect(t, !check_condition(&cpu, 0xF), "NV should never pass with all flags clear")
+}
+
+@(test)
 test_get_condition_code :: proc(t: ^testing.T) {
     // Condition is in bits 28-31
     opcode := u32(0xE0000000) // AL (0xE)

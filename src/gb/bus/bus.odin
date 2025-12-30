@@ -1,6 +1,5 @@
 package gb_bus
 
-import "core:fmt"
 import "../ppu"
 
 // Game Boy Memory Map:

@@ -216,7 +216,7 @@ test_ppu_end_hblank_normal :: proc(t: ^testing.T) {
     p.dispstat.hblank_flag = true
     p.vcount = 50
 
-    vblank_irq, vcount_irq := ppu_end_hblank(&p)
+    vblank_irq, _ := ppu_end_hblank(&p)
 
     testing.expect(t, !p.dispstat.hblank_flag, "HBlank flag should be cleared")
     testing.expect_value(t, p.vcount, u16(51))

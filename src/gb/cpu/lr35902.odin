@@ -1,7 +1,5 @@
 package gb_cpu
 
-import "core:fmt"
-
 // LR35902 CPU - Sharp SM83 core used in Game Boy
 // Similar to Z80 but with differences:
 // - No IX, IY registers

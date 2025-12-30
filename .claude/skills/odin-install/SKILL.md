@@ -74,28 +74,73 @@ make release-native
 export PATH="$PWD:$PATH"
 ```
 
-## Language Server (OLS)
+## Language Server (OLS) and Formatter
+
+### Install OLS from Source
 
 ```bash
-# Download OLS
-git clone https://github.com/DanielGaworworski/ols
-cd ols
-odin build . -out:ols
+# Clone OLS repository
+cd /tmp && git clone --depth 1 https://github.com/DanielGavin/ols.git
 
-# Install
-sudo mv ols /usr/local/bin/
+# Build OLS (uses build script)
+cd /tmp/ols && ./build.sh
 
-# Configure (ols.json in project root)
+# Build odinfmt formatter
+./odinfmt.sh
+
+# Install to system
+sudo cp /tmp/ols/ols /usr/local/bin/
+sudo cp /tmp/ols/odinfmt /usr/local/bin/
+
+# Verify installation
+which ols odinfmt
+```
+
+### Check if OLS is installed
+
+```bash
+# Check for OLS and odinfmt
+which ols odinfmt
+
+# If missing, follow the install steps above
+```
+
+### Configure OLS (ols.json in project root)
+
+After installing, create `ols.json` in your project root:
+
+```json
 {
-    "$schema": "https://raw.githubusercontent.com/DanielGaworski/ols/master/misc/ols.schema.json",
+    "$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
     "collections": [
-        { "name": "core", "path": "/opt/odin-*/core" },
-        { "name": "vendor", "path": "/opt/odin-*/vendor" }
+        { "name": "core", "path": "/opt/odin-linux-amd64-nightly+2025-12-04/core" },
+        { "name": "vendor", "path": "/opt/odin-linux-amd64-nightly+2025-12-04/vendor" }
     ],
     "enable_semantic_tokens": true,
+    "enable_snippets": true,
+    "enable_inlay_hints": true,
     "enable_hover": true,
-    "enable_snippets": true
+    "enable_document_symbols": true,
+    "enable_format": true,
+    "enable_procedure_snippet": true,
+    "enable_references": true,
+    "odin_command": "/usr/local/bin/odin"
 }
+```
+
+**Note**: Adjust the collection paths to match your actual Odin install directory (use `ls /opt/ | grep odin`).
+
+### Using odinfmt
+
+```bash
+# Format a file (output to stdout)
+odinfmt /path/to/file.odin
+
+# Format and overwrite file in place
+odinfmt -w /path/to/file.odin
+
+# Format from stdin
+echo 'package main; main :: proc() { x:=1 }' | odinfmt -stdin
 ```
 
 ## Project Setup

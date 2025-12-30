@@ -1,6 +1,5 @@
 package gb
 
-import "core:fmt"
 import "cpu"
 import "bus"
 import "ppu"

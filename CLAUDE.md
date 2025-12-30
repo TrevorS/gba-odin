@@ -85,6 +85,8 @@ gba-odin/
 │   └── tests/jsmolka/      # ARM/THUMB test ROMs
 ├── saves/                  # Save files (gitignored)
 ├── build/                  # Build output (gitignored)
+├── benchmarks/             # Performance benchmarks
+│   └── main.odin           # Benchmark runner
 └── .claude/
     └── skills/             # Claude Code skills for this project
 ```
@@ -214,6 +216,201 @@ make lint            # Enforces 1TBS brace style (-strict-style)
 make check           # Full vetting (-vet): unused vars, shadowing
 make check-warnings  # Show warnings without failing build
 ```
+
+## Benchmarking
+
+Odin provides built-in benchmarking via `core:time`. Run performance benchmarks with:
+
+```bash
+make bench           # Build with -o:speed and run benchmarks
+```
+
+### Benchmark Results
+
+The benchmarks measure critical hot paths:
+
+| Operation | Description |
+|-----------|-------------|
+| Condition eval | ARM condition code evaluation (14 codes) |
+| ARM decode | ARM instruction LUT lookup |
+| THUMB decode | THUMB instruction LUT lookup |
+| Register access | Register read/write with banking |
+| Mode switch | CPU mode transitions with bank swapping |
+
+### Writing Benchmarks
+
+Add benchmarks to `benchmarks/main.odin`:
+
+```odin
+import "core:time"
+import "base:runtime"
+
+// Define benchmark
+opts := time.Benchmark_Options{
+    bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+        for _ in 0 ..< opts.rounds {
+            // Code to benchmark
+            opts.count += 1  // Track operations
+        }
+        return .Okay
+    },
+    rounds = 100_000,
+}
+
+// Run and get results
+time.benchmark(&opts)
+// opts.duration, opts.rounds_per_second available
+```
+
+### Profiling with Spall
+
+For detailed profiling, Odin integrates with [Spall](https://gravitymoth.com/spall/):
+
+```odin
+import "core:prof/spall"
+
+// Manual instrumentation
+spall.SCOPED_EVENT(&ctx, &buffer, #procedure)
+
+// Or automatic instrumentation with @(instrumentation_enter/exit)
+```
+
+## Odin Language Server (OLS)
+
+This project uses OLS for language server features and odinfmt for code formatting.
+
+### Installation
+
+If OLS is not installed, use the `odin-install` skill or run:
+
+```bash
+# Check if installed
+which ols odinfmt
+
+# If not installed, build from source:
+cd /tmp && git clone --depth 1 https://github.com/DanielGavin/ols.git
+cd /tmp/ols && ./build.sh && ./odinfmt.sh
+sudo cp /tmp/ols/ols /tmp/ols/odinfmt /usr/local/bin/
+```
+
+### Configuration
+
+The project includes `ols.json` at the root with proper collection paths. If Odin is updated, update the paths:
+
+```bash
+# Find current Odin install directory
+ls /opt/ | grep odin
+
+# Update ols.json collection paths to match
+```
+
+### Formatting
+
+```bash
+# Format a file (preview)
+odinfmt src/main.odin
+
+# Format and save in place
+odinfmt -w src/main.odin
+
+# Format from stdin
+cat src/main.odin | odinfmt -stdin
+```
+
+### Claude Code LSP Integration
+
+This project is configured for Claude Code's built-in LSP tools with OLS:
+
+- **`.lsp.json`** - Configures OLS as the language server for `.odin` files
+- **`.claude/settings.json`** - Enables `ENABLE_LSP_TOOLS=1` for this project
+
+Available LSP operations (Claude Code v2.0.74+):
+- **goToDefinition** - Jump to where a symbol is defined
+- **findReferences** - Find all usages of a symbol
+- **documentSymbol** - List all symbols in a file
+
+To enable debug logging:
+```bash
+claude --enable-lsp-logging  # Logs go to ~/.claude/debug/
+```
+
+### Claude Code on the Web
+
+This project includes a SessionStart hook (`.claude/hooks/session-start.sh`) that automatically installs Odin and OLS when running on Claude Code for the web. The hook:
+
+1. Detects if running in remote environment (`$CLAUDE_CODE_REMOTE`)
+2. Downloads and installs Odin from latest release
+3. Builds and installs OLS and odinfmt from source
+4. Sets `ODIN_ROOT` environment variable for the session
+
+No manual setup needed - just open this repo in Claude Code on the web and the environment will be configured automatically.
+
+### Manual OLS Queries
+
+When Claude Code's built-in LSP tools aren't available, use the OLS wrapper script directly:
+
+```bash
+# List all symbols in a file
+.claude/scripts/ols-query.sh symbols src/main.odin
+
+# Find all references to a symbol (line and char are 0-indexed)
+.claude/scripts/ols-query.sh references src/system.odin 3 0
+
+# Check if file needs formatting
+.claude/scripts/ols-query.sh format src/main.odin
+
+# Get raw JSON output
+.claude/scripts/ols-query.sh --raw symbols src/system.odin
+```
+
+Available operations: `symbols`, `references`, `definition`, `hover`, `format`
+
+### Diagnostics and Formatting
+
+OLS integrates with Odin's built-in tools for errors and formatting:
+
+```bash
+# Check for errors/warnings in the codebase
+odin check src/
+
+# Check a single file
+odin check src/main.odin -file
+
+# Format a file (preview)
+odinfmt src/main.odin
+
+# Format and save in place
+odinfmt -w src/main.odin
+```
+
+The Makefile also provides:
+- `make lint` - Strict style check (1TBS brace style)
+- `make check` - Full vetting (unused vars, shadowing)
+- `make check-warnings` - Show warnings without failing
+
+### Automatic Hooks
+
+The project includes automatic hooks for code quality:
+
+| Hook | When | What |
+|------|------|------|
+| `SessionStart` | When Claude Code starts | Installs Odin and OLS on web environments |
+| `PostToolUse:Edit` | After editing `.odin` files | Checks the modified package for errors |
+| `Stop` | When Claude finishes responding | Auto-formats and runs project-wide check |
+
+**Hook Details:**
+
+- **SessionStart** (`.claude/hooks/session-start.sh`): Only runs on Claude Code for the web (`$CLAUDE_CODE_REMOTE=true`). Installs Odin from latest release and builds OLS from source.
+
+- **PostToolUse:Edit** (`.claude/hooks/post-edit-check.sh`): Runs `odin check` on the package directory after each edit to an `.odin` file. Catches errors immediately while context is fresh. Skips test files.
+
+- **Stop** (`.claude/hooks/stop-odin-check.sh`): When Claude finishes responding:
+  1. Finds all `.odin` files modified in the last 5 minutes
+  2. Auto-formats them with `odinfmt -w` (only if changes needed)
+  3. Runs `odin check src/` for project-wide validation
+  4. Reports summary of formatting and any errors
+
+All hooks are **non-blocking** - they exit with code 1 to show warnings without interrupting the workflow. This means you'll see error summaries but can continue working.
 
 ## Guidelines
 

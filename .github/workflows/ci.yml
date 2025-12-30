@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Odin
+        run: |
+          # Get latest Odin release
+          ODIN_URL=$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest \
+            | grep -o '"browser_download_url": "[^"]*linux[^"]*amd64[^"]*"' \
+            | head -1 | cut -d'"' -f4)
+
+          curl -L "$ODIN_URL" -o /tmp/odin.tar.gz
+          sudo tar -xzf /tmp/odin.tar.gz -C /opt/
+
+          ODIN_DIR=$(ls /opt/ | grep odin | head -1)
+          echo "/opt/$ODIN_DIR" >> $GITHUB_PATH
+          echo "ODIN_ROOT=/opt/$ODIN_DIR" >> $GITHUB_ENV
+
+      - name: Verify Odin installation
+        run: odin version
+
+      - name: Lint (strict style)
+        run: make lint
+
+      - name: Check (vet)
+        run: make check
+
+      - name: Run tests
+        run: make test
+
+      - name: Build
+        run: make build

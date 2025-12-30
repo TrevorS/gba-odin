@@ -509,7 +509,7 @@ test_interrupt_disabled :: proc(t: ^testing.T) {
     ie: u8 = 0x01
     if_: u8 = 0x01
 
-    serviced, new_if := handle_interrupts(&cpu, ie, if_)
+    serviced, _ := handle_interrupts(&cpu, ie, if_)
 
     testing.expect(t, !serviced, "Interrupt should not be serviced when IME=0")
     testing.expect_value(t, cpu.pc, u16(0x1234))  // PC unchanged

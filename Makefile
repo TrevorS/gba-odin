@@ -3,7 +3,7 @@
 
 .PHONY: all build run clean debug test test-all \
         test-gb-cpu test-gb-ppu test-gb-bus test-gba-cpu test-gba-ppu \
-        lint check check-warnings
+        lint check check-warnings bench
 
 # Default target
 all: build
@@ -80,6 +80,18 @@ check-warnings:
 	@odin check src -vet-unused -vet-shadowing 2>&1 || true
 
 # =============================================================================
+# Benchmarks
+# =============================================================================
+
+# Run performance benchmarks with optimizations
+bench:
+	@mkdir -p build
+	@echo "=== Building benchmarks with -o:speed ==="
+	@odin build benchmarks -out:build/bench -o:speed
+	@echo ""
+	@./build/bench
+
+# =============================================================================
 # Help
 # =============================================================================
 
@@ -104,3 +116,6 @@ help:
 	@echo "  make lint           - Style check (1TBS brace style)"
 	@echo "  make check          - Full vet (unused vars, shadowing)"
 	@echo "  make check-warnings - Show warnings without failing"
+	@echo ""
+	@echo "Benchmark:"
+	@echo "  make bench          - Run performance benchmarks"

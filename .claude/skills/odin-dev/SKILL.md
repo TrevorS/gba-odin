@@ -206,6 +206,72 @@ import "core:fmt"
 fmt.printf("value: %v\n", value)
 ```
 
+## Language Server (OLS) and Formatting
+
+### Check OLS Installation
+
+```bash
+# Verify OLS and odinfmt are installed
+which ols odinfmt
+
+# If not installed, use the odin-install skill
+```
+
+### Using odinfmt
+
+```bash
+# Format a single file (to stdout)
+odinfmt src/main.odin
+
+# Format and overwrite in place
+odinfmt -w src/main.odin
+
+# Format from stdin
+echo 'package main; x:=1' | odinfmt -stdin
+```
+
+### Project Configuration (ols.json)
+
+Every Odin project should have an `ols.json` at the root:
+
+```json
+{
+    "$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
+    "collections": [
+        { "name": "core", "path": "/opt/odin-linux-amd64-nightly+2025-12-04/core" },
+        { "name": "vendor", "path": "/opt/odin-linux-amd64-nightly+2025-12-04/vendor" }
+    ],
+    "enable_semantic_tokens": true,
+    "enable_hover": true,
+    "enable_format": true,
+    "enable_references": true,
+    "odin_command": "/usr/local/bin/odin"
+}
+```
+
+### Claude Code LSP Integration
+
+For Claude Code to use OLS, projects need:
+
+1. **`.lsp.json`** at project root:
+```json
+{
+  "odin": {
+    "command": "ols",
+    "extensionToLanguage": { ".odin": "odin" }
+  }
+}
+```
+
+2. **`.claude/settings.json`** to enable LSP tools:
+```json
+{
+  "env": { "ENABLE_LSP_TOOLS": "1" }
+}
+```
+
+This enables goToDefinition, findReferences, and documentSymbol operations.
+
 ## Testing
 
 ```odin

@@ -695,11 +695,12 @@ run_gba :: proc(options: Options) {
     fmt.println()
 
     // Initialize display if not headless
-    display: Display
     headless := options.headless
+    display: Display
+    display_ok := false
     if !headless && !HEADLESS_ONLY {
-        display, ok := display_init("gba-odin")
-        if !ok {
+        display, display_ok = display_init("gba-odin")
+        if !display_ok {
             fmt.eprintln("Warning: Failed to initialize display, running headless")
             headless = true
         } else {

@@ -450,7 +450,6 @@ render_text_bg :: proc(ppu: ^PPU, bg: int, scanline: int) {
 
         // Calculate screen block offset for large backgrounds
         screen_block := 0
-        tiles_per_row := bg_width / 8
         if bg_width == 512 && tile_x >= 32 {
             screen_block += 1
             tile_x -= 32

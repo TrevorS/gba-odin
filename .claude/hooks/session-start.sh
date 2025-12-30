@@ -52,8 +52,10 @@ else
   echo "OLS and odinfmt installed"
 fi
 
-# Export ODIN_ROOT for the session
+# Export ODIN_ROOT for the session (if CLAUDE_ENV_FILE is available)
 ODIN_DIR=$(ls /opt/ | grep odin | head -1)
-echo "export ODIN_ROOT=/opt/$ODIN_DIR" >> "$CLAUDE_ENV_FILE"
+if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+  echo "export ODIN_ROOT=/opt/$ODIN_DIR" >> "$CLAUDE_ENV_FILE"
+fi
 
 echo "Odin development environment ready!"

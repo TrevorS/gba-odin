@@ -708,7 +708,7 @@ get_cycles :: proc(opcode: u8, is_cb: bool) -> u8 {
     return OPCODES[opcode].cycles
 }
 
-// Register names for CB instruction decoding
+// Register names for CB instruction decoding (runtime array for variable indexing)
 REGISTER_NAMES := [8]string{"B", "C", "D", "E", "H", "L", "(HL)", "A"}
 
 // Get register name by index (for CB instructions)

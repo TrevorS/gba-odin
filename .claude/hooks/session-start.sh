@@ -6,15 +6,15 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
-# Configure git identity
-git config --global user.email "trevor@strieber.org"
-git config --global user.name "Trevor Strieber"
-
 echo "Installing Odin and OLS for Claude Code on the web..."
+
+# Track the Odin directory for later use
+ODIN_DIR=""
 
 # Check if Odin is already installed
 if command -v odin &> /dev/null; then
   echo "Odin already installed: $(odin version)"
+  ODIN_DIR=$(ls /opt/ | grep odin | head -1)
 else
   echo "Installing Odin..."
 
@@ -53,8 +53,7 @@ else
 fi
 
 # Export ODIN_ROOT for the session (if CLAUDE_ENV_FILE is available)
-ODIN_DIR=$(ls /opt/ | grep odin | head -1)
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "$ODIN_DIR" ]; then
   echo "export ODIN_ROOT=/opt/$ODIN_DIR" >> "$CLAUDE_ENV_FILE"
 fi
 

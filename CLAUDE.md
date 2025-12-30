@@ -70,7 +70,8 @@ gba-odin/
 │       ├── gb.odin         # GB system orchestration
 │       ├── cpu/
 │       │   ├── lr35902.odin      # GB CPU (LR35902/SM83)
-│       │   └── lr35902_test.odin # GB CPU tests (34 tests)
+│       │   ├── lr35902_test.odin # GB CPU tests (34 tests)
+│       │   └── opcodes.odin      # Opcode metadata (disassembly, debugging)
 │       ├── bus/
 │       │   ├── bus.odin          # GB memory bus, MBC support
 │       │   └── bus_test.odin     # GB Bus tests (30 tests)

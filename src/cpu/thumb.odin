@@ -7,6 +7,11 @@ import "core:fmt"
 thumb_debug_ldst := false   // Trace load/store operations
 thumb_trace := false        // Trace all instructions with disassembly
 
+// Reference fmt to prevent unused import warning in release builds
+@(cold)
+@(disabled = !ODIN_DEBUG)
+_thumb_debug_fmt_ref :: proc() { fmt.println() }
+
 // Thumb instruction handler type
 Thumb_Handler :: #type proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u16)
 

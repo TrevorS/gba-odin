@@ -7,6 +7,11 @@ import "core:fmt"
 arm_debug_ldst := false   // Trace load/store operations
 arm_trace := false        // Trace all instructions with disassembly
 
+// Reference fmt to prevent unused import warning in release builds
+@(cold)
+@(disabled = !ODIN_DEBUG)
+_arm_debug_fmt_ref :: proc() { fmt.println() }
+
 // ARM instruction handler type
 ARM_Handler :: #type proc(cpu: ^CPU, mem_bus: ^bus.Bus, opcode: u32)
 

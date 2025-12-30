@@ -6,6 +6,10 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# Configure git identity for commits made on Claude Code web
+git config --global user.name "TrevorS"
+git config --global user.email "trevor@strieber.org"
+
 echo "Installing Odin and OLS for Claude Code on the web..."
 
 # Track the Odin directory for later use

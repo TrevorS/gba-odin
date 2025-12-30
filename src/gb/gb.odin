@@ -208,7 +208,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     switch opcode {
     // 0x00-0x0F
     case 0x00: return 4  // NOP
-    case 0x01: cpu.cpu.set_bc(c, fetch16(gb)); return 12  // LD BC,nn
+    case 0x01: cpu.set_bc(c, fetch16(gb)); return 12  // LD BC,nn
     case 0x02: write8(gb, cpu.get_bc(c), c.a); return 8  // LD (BC),A
     case 0x03: cpu.set_bc(c, cpu.get_bc(c) + 1); return 8  // INC BC
     case 0x04: c.b = cpu.inc8(c, c.b); return 4  // INC B
@@ -434,14 +434,14 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0xA5: cpu.and_a(c, c.l); return 4
     case 0xA6: cpu.and_a(c, read8(gb, cpu.get_hl(c))); return 8
     case 0xA7: cpu.and_a(c, c.a); return 4
-    case 0xA8: cpu.xcpu.or_a(c, c.b); return 4
-    case 0xA9: cpu.xcpu.or_a(c, c.c); return 4
-    case 0xAA: cpu.xcpu.or_a(c, c.d); return 4
-    case 0xAB: cpu.xcpu.or_a(c, c.e); return 4
-    case 0xAC: cpu.xcpu.or_a(c, c.h); return 4
-    case 0xAD: cpu.xcpu.or_a(c, c.l); return 4
-    case 0xAE: cpu.xcpu.or_a(c, read8(gb, cpu.get_hl(c))); return 8
-    case 0xAF: cpu.xcpu.or_a(c, c.a); return 4
+    case 0xA8: cpu.xor_a(c, c.b); return 4
+    case 0xA9: cpu.xor_a(c, c.c); return 4
+    case 0xAA: cpu.xor_a(c, c.d); return 4
+    case 0xAB: cpu.xor_a(c, c.e); return 4
+    case 0xAC: cpu.xor_a(c, c.h); return 4
+    case 0xAD: cpu.xor_a(c, c.l); return 4
+    case 0xAE: cpu.xor_a(c, read8(gb, cpu.get_hl(c))); return 8
+    case 0xAF: cpu.xor_a(c, c.a); return 4
     case 0xB0: cpu.or_a(c, c.b); return 4
     case 0xB1: cpu.or_a(c, c.c); return 4
     case 0xB2: cpu.or_a(c, c.d); return 4
@@ -546,7 +546,7 @@ execute :: proc(gb: ^GameBoy, opcode: u8) -> u8 {
     case 0xE9: c.pc = cpu.get_hl(c); return 4  // JP HL
     case 0xEA: write8(gb, fetch16(gb), c.a); return 16  // LD (nn),A
     // 0xEB, 0xEC, 0xED illegal
-    case 0xEE: cpu.xcpu.or_a(c, fetch8(gb)); return 8  // XOR n
+    case 0xEE: cpu.xor_a(c, fetch8(gb)); return 8  // XOR n
     case 0xEF: push16(gb, c.pc); c.pc = 0x28; return 16  // RST 28
     case 0xF0: c.a = read8(gb, 0xFF00 + u16(fetch8(gb))); return 12  // LD A,(FF00+n)
     case 0xF1:  // POP AF

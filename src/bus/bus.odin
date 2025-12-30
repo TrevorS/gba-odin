@@ -1,6 +1,5 @@
 package bus
 
-import "core:fmt"
 import "../ppu"
 
 // Memory region size constants

@@ -15,7 +15,11 @@ fi
 
 # Find Odin files modified recently (last 5 minutes)
 # This avoids running checks when no code was changed
-mapfile -t recent_files < <(find "$PROJECT_DIR/src" -name "*.odin" -mmin -5 2>/dev/null)
+# Note: Using while loop instead of mapfile for bash 3.x compatibility (macOS)
+recent_files=()
+while IFS= read -r -d '' file; do
+    recent_files+=("$file")
+done < <(find "$PROJECT_DIR/src" -name "*.odin" -mmin -5 -print0 2>/dev/null)
 
 if [[ ${#recent_files[@]} -eq 0 ]]; then
     exit 0

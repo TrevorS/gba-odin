@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:time"
 import "base:runtime"
 import "../src/cpu"
+import gb_cpu "../src/gb/cpu"
 
 // =============================================================================
 // Emulator Benchmarks
@@ -22,6 +23,7 @@ main :: proc() {
     fmt.println("")
 
     run_cpu_benchmarks()
+    run_gb_cpu_benchmarks()
 
     fmt.println("┌────────────────────────────────────────┐")
     fmt.println("│ Profiling Example                      │")
@@ -242,6 +244,239 @@ run_cpu_benchmarks :: proc() {
         }
         time.benchmark(&opts)
         fmt.printf("  Mode switch:      %8.2f M ops/sec  (%v)\n",
+            opts.rounds_per_second / 1_000_000, opts.duration)
+    }
+
+    fmt.println("")
+}
+
+// =============================================================================
+// GB/GBC CPU Benchmarks
+// =============================================================================
+
+run_gb_cpu_benchmarks :: proc() {
+    fmt.println("┌────────────────────────────────────────┐")
+    fmt.println("│ GB/GBC CPU Benchmarks                  │")
+    fmt.println("└────────────────────────────────────────┘")
+
+    // Opcode table lookup
+    {
+        opts := time.Benchmark_Options{
+            bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+                // Sample common opcodes
+                opcodes := [?]u8{
+                    0x00, // NOP
+                    0x3E, // LD A,n
+                    0xC3, // JP nn
+                    0x20, // JR NZ,n
+                    0x80, // ADD A,B
+                    0xCB, // CB prefix
+                    0xCD, // CALL nn
+                    0xC9, // RET
+                }
+
+                for _ in 0 ..< opts.rounds {
+                    for opcode in opcodes {
+                        info := gb_cpu.get_opcode_info(opcode)
+                        _ = info.cycles
+                        _ = info.mnemonic
+                    }
+                    opts.count += len(opcodes)
+                }
+                return .Okay
+            },
+            rounds = BENCH_ITERATIONS,
+        }
+        time.benchmark(&opts)
+        fmt.printf("  Opcode lookup:    %8.2f M ops/sec  (%v)\n",
+            opts.rounds_per_second / 1_000_000, opts.duration)
+    }
+
+    // CB opcode table lookup
+    {
+        opts := time.Benchmark_Options{
+            bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+                // Sample CB opcodes
+                cb_opcodes := [?]u8{
+                    0x00, // RLC B
+                    0x11, // RL C
+                    0x27, // SLA A
+                    0x38, // SRL B
+                    0x40, // BIT 0,B
+                    0x80, // RES 0,B
+                    0xC0, // SET 0,B
+                    0x7F, // BIT 7,A
+                }
+
+                for _ in 0 ..< opts.rounds {
+                    for opcode in cb_opcodes {
+                        info := gb_cpu.get_cb_opcode_info(opcode)
+                        _ = info.cycles
+                        _ = info.mnemonic
+                    }
+                    opts.count += len(cb_opcodes)
+                }
+                return .Okay
+            },
+            rounds = BENCH_ITERATIONS,
+        }
+        time.benchmark(&opts)
+        fmt.printf("  CB opcode lookup: %8.2f M ops/sec  (%v)\n",
+            opts.rounds_per_second / 1_000_000, opts.duration)
+    }
+
+    // Register pair access
+    {
+        opts := time.Benchmark_Options{
+            bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+                c: gb_cpu.CPU
+                gb_cpu.cpu_init_dmg(&c)
+
+                for _ in 0 ..< opts.rounds {
+                    // Get pairs
+                    _ = gb_cpu.get_af(&c)
+                    _ = gb_cpu.get_bc(&c)
+                    _ = gb_cpu.get_de(&c)
+                    _ = gb_cpu.get_hl(&c)
+
+                    // Set pairs
+                    gb_cpu.set_af(&c, 0x1234)
+                    gb_cpu.set_bc(&c, 0x5678)
+                    gb_cpu.set_de(&c, 0x9ABC)
+                    gb_cpu.set_hl(&c, 0xDEF0)
+
+                    opts.count += 8
+                }
+                return .Okay
+            },
+            rounds = BENCH_ITERATIONS,
+        }
+        time.benchmark(&opts)
+        fmt.printf("  Register pairs:   %8.2f M ops/sec  (%v)\n",
+            opts.rounds_per_second / 1_000_000, opts.duration)
+    }
+
+    // ALU operations
+    {
+        opts := time.Benchmark_Options{
+            bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+                c: gb_cpu.CPU
+                gb_cpu.cpu_init_dmg(&c)
+
+                for _ in 0 ..< opts.rounds {
+                    c.a = 0x50
+
+                    // INC/DEC
+                    c.b = gb_cpu.inc8(&c, c.b)
+                    c.c = gb_cpu.dec8(&c, c.c)
+
+                    // ADD/SUB
+                    gb_cpu.add_a(&c, 0x10, false)
+                    gb_cpu.sub_a(&c, 0x05, false)
+
+                    // ADC/SBC
+                    gb_cpu.add_a(&c, 0x01, true)
+                    gb_cpu.sub_a(&c, 0x01, true)
+
+                    // Logic ops
+                    gb_cpu.and_a(&c, 0xFF)
+                    gb_cpu.or_a(&c, 0x0F)
+                    gb_cpu.xor_a(&c, 0xAA)
+                    gb_cpu.cp_a(&c, 0x50)
+
+                    opts.count += 10
+                }
+                return .Okay
+            },
+            rounds = BENCH_ITERATIONS,
+        }
+        time.benchmark(&opts)
+        fmt.printf("  ALU operations:   %8.2f M ops/sec  (%v)\n",
+            opts.rounds_per_second / 1_000_000, opts.duration)
+    }
+
+    // Flag operations
+    {
+        opts := time.Benchmark_Options{
+            bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+                c: gb_cpu.CPU
+                gb_cpu.cpu_init_dmg(&c)
+
+                for _ in 0 ..< opts.rounds {
+                    // Get flags
+                    _ = gb_cpu.get_flag_z(&c)
+                    _ = gb_cpu.get_flag_n(&c)
+                    _ = gb_cpu.get_flag_h(&c)
+                    _ = gb_cpu.get_flag_c(&c)
+
+                    // Set individual flags
+                    gb_cpu.set_flag_z(&c, true)
+                    gb_cpu.set_flag_n(&c, false)
+                    gb_cpu.set_flag_h(&c, true)
+                    gb_cpu.set_flag_c(&c, false)
+
+                    // Set all flags at once
+                    gb_cpu.set_flags(&c, true, false, true, false)
+
+                    opts.count += 9
+                }
+                return .Okay
+            },
+            rounds = BENCH_ITERATIONS,
+        }
+        time.benchmark(&opts)
+        fmt.printf("  Flag operations:  %8.2f M ops/sec  (%v)\n",
+            opts.rounds_per_second / 1_000_000, opts.duration)
+    }
+
+    // 16-bit ADD HL
+    {
+        opts := time.Benchmark_Options{
+            bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+                c: gb_cpu.CPU
+                gb_cpu.cpu_init_dmg(&c)
+
+                for _ in 0 ..< opts.rounds {
+                    gb_cpu.set_hl(&c, 0x1000)
+                    gb_cpu.add_hl(&c, gb_cpu.get_bc(&c))
+                    gb_cpu.add_hl(&c, gb_cpu.get_de(&c))
+                    gb_cpu.add_hl(&c, c.sp)
+
+                    opts.count += 3
+                }
+                return .Okay
+            },
+            rounds = BENCH_ITERATIONS,
+        }
+        time.benchmark(&opts)
+        fmt.printf("  ADD HL,rr:        %8.2f M ops/sec  (%v)\n",
+            opts.rounds_per_second / 1_000_000, opts.duration)
+    }
+
+    // DAA operation
+    {
+        opts := time.Benchmark_Options{
+            bench = proc(opts: ^time.Benchmark_Options, _: runtime.Allocator) -> time.Benchmark_Error {
+                c: gb_cpu.CPU
+                gb_cpu.cpu_init_dmg(&c)
+
+                for _ in 0 ..< opts.rounds {
+                    c.a = 0x99
+                    gb_cpu.add_a(&c, 0x01, false)
+                    gb_cpu.daa(&c)
+
+                    c.a = 0x50
+                    gb_cpu.sub_a(&c, 0x25, false)
+                    gb_cpu.daa(&c)
+
+                    opts.count += 2
+                }
+                return .Okay
+            },
+            rounds = BENCH_ITERATIONS,
+        }
+        time.benchmark(&opts)
+        fmt.printf("  DAA operation:    %8.2f M ops/sec  (%v)\n",
             opts.rounds_per_second / 1_000_000, opts.duration)
     }
 

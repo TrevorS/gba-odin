@@ -10,6 +10,12 @@ ROM_DIR="$PROJECT_DIR/roms/tests"
 SCREENSHOT_DIR="$PROJECT_DIR/test_results"
 BIOS_PATH="$PROJECT_DIR/bios/gba_bios.bin"
 EMU_PATH="$PROJECT_DIR/build/gba-odin"
+SKIP_BIOS=false
+
+# Check if BIOS exists, otherwise use skip-bios mode
+if [ ! -f "$BIOS_PATH" ]; then
+    SKIP_BIOS=true
+fi
 
 # Test ROM sources
 JSMOLKA_REPO="https://raw.githubusercontent.com/jsmolka/gba-tests/master"
@@ -29,9 +35,8 @@ echo "=== GBA Emulator Test Suite ==="
 echo ""
 
 # Check prerequisites
-if [ ! -f "$BIOS_PATH" ]; then
-    echo -e "${RED}Error: BIOS not found at $BIOS_PATH${NC}"
-    exit 1
+if [ "$SKIP_BIOS" = true ]; then
+    echo -e "${YELLOW}Note: BIOS not found, using --skip-bios mode${NC}"
 fi
 
 if [ ! -f "$EMU_PATH" ]; then
@@ -107,9 +112,17 @@ run_test() {
 
     echo -n "  [running] $test_name... "
 
+    # Build command with optional BIOS
+    local cmd="$EMU_PATH $rom_path --headless --frames $frames --screenshot $screenshot_path"
+    if [ "$SKIP_BIOS" = true ]; then
+        cmd="$cmd --skip-bios"
+    else
+        cmd="$cmd --bios $BIOS_PATH"
+    fi
+
     # Run emulator and capture output
     local output
-    if output=$("$EMU_PATH" "$rom_path" --bios "$BIOS_PATH" --headless --frames "$frames" --screenshot "$screenshot_path" 2>&1); then
+    if output=$($cmd 2>&1); then
         echo -e "${GREEN}[done]${NC} -> $screenshot_name.png"
         return 0
     else

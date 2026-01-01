@@ -53,6 +53,9 @@ Bus :: struct {
     postflg: u8, // 0x04000300 - Post-boot flag
     haltcnt: u8, // 0x04000301 - Halt control (write-only)
 
+    // Input
+    keyinput: u16, // 0x04000130 - Key status (active-low, 0x3FF = all released)
+
     // Halt request callback
     halt_requested: bool,
 }
@@ -84,7 +87,13 @@ bus_init :: proc(bus: ^Bus, bios, ewram, iwram, palette, vram, oam, io, rom, sra
     bus.waitcnt = 0
     bus.postflg = 0
     bus.haltcnt = 0
+    bus.keyinput = 0x3FF // All buttons released
     bus.halt_requested = false
+}
+
+// Update key input state (called from main loop)
+bus_update_keyinput :: proc(bus: ^Bus, keyinput: u16) {
+    bus.keyinput = keyinput
 }
 
 // Set PC pointer for BIOS protection

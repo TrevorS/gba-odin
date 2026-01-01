@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "bus"
 import "cpu"
 import "ppu"
 import "gb"
@@ -594,20 +595,41 @@ run_gameboy :: proc(options: Options, rom_data: []u8, is_cgb: bool) {
     fmt.println("Title:", title)
     fmt.println()
 
-    // Force headless mode (SDL not implemented for GB yet)
-    options := options  // Make mutable copy
-    options.headless = true
+    // Initialize display if not headless
+    headless := options.headless
+    display: Display
+    display_ok := false
+    if !headless && !HEADLESS_ONLY {
+        display, display_ok = display_init("gba-odin - Game Boy", gb_ppu.SCREEN_WIDTH, gb_ppu.SCREEN_HEIGHT)
+        if !display_ok {
+            fmt.eprintln("Warning: Failed to initialize display, running headless")
+            headless = true
+        }
+    } else {
+        headless = true
+    }
+    defer if display_ok do display_destroy(&display)
 
     fmt.println("Starting emulation...")
-    fmt.println("Running in headless mode")
+    if headless {
+        fmt.println("Running in headless mode")
+    }
 
     frame_count := 0
     start_time := time.now()
+    last_fps_time := start_time
+    fps_frame_count := 0
 
     for frame_count < options.max_frames || options.max_frames == 0 {
-        // Auto-input for headless testing: press buttons periodically to advance menus
-        if options.headless && options.max_frames > 0 {
-            // Press START and A every 30 frames for 5 frames to advance past menus
+        // Poll events if not headless
+        if !headless {
+            if !display_poll_events() {
+                break
+            }
+            // Update input from shared state
+            gb.update_input(&gameboy, get_gb_buttons(), get_gb_dpad())
+        } else if options.max_frames > 0 {
+            // Auto-input for headless testing: press buttons periodically to advance menus
             if (frame_count % 30) < 5 {
                 gb.update_input(&gameboy, 0x09, 0x00)  // START + A pressed (bits 0, 3)
             } else {
@@ -618,11 +640,33 @@ run_gameboy :: proc(options: Options, rom_data: []u8, is_cgb: bool) {
         // Run one frame
         gb.run_frame(&gameboy)
         frame_count += 1
+        fps_frame_count += 1
+
+        // Update display if not headless
+        if !headless {
+            framebuffer := gb.get_framebuffer(&gameboy)
+            display_update(&display, cast([^]u16)framebuffer, gb_ppu.SCREEN_WIDTH, gb_ppu.SCREEN_HEIGHT)
+        }
 
         // Check frame limit
         if options.max_frames > 0 && frame_count >= options.max_frames {
             fmt.printf("\nReached frame limit (%d frames)\n", frame_count)
             break
+        }
+
+        // Update FPS display periodically
+        now := time.now()
+        fps_elapsed := time.duration_seconds(time.diff(last_fps_time, now))
+        if fps_elapsed >= 1.0 {
+            fps := f64(fps_frame_count) / fps_elapsed
+            if !headless {
+                display_set_title(&display, fps)
+            }
+            if headless && frame_count % 60 == 0 {
+                fmt.printf("\rFrame %d (%.1f FPS)", frame_count, fps)
+            }
+            last_fps_time = now
+            fps_frame_count = 0
         }
     }
 
@@ -699,7 +743,7 @@ run_gba :: proc(options: Options) {
     display: Display
     display_ok := false
     if !headless && !HEADLESS_ONLY {
-        display, display_ok = display_init("gba-odin")
+        display, display_ok = display_init("gba-odin", ppu.SCREEN_WIDTH, ppu.SCREEN_HEIGHT)
         if !display_ok {
             fmt.eprintln("Warning: Failed to initialize display, running headless")
             headless = true
@@ -708,9 +752,7 @@ run_gba :: proc(options: Options) {
         // Force headless mode when built without SDL2
         headless = true
     }
-    if display_ok {
-        defer display_destroy(&display)
-    }
+    defer if display_ok do display_destroy(&display)
 
     // Run emulation
     fmt.println("Starting emulation...")
@@ -729,6 +771,8 @@ run_gba :: proc(options: Options) {
             if !display_poll_events() {
                 break
             }
+            // Update GBA input from shared state
+            bus.bus_update_keyinput(&gba.bus, get_keyinput())
         }
 
         // Run one frame
@@ -739,7 +783,7 @@ run_gba :: proc(options: Options) {
         // Update display if not headless
         if !headless {
             framebuffer := gba_get_framebuffer(&gba)
-            display_update(&display, framebuffer)
+            display_update(&display, cast([^]u16)framebuffer, ppu.SCREEN_WIDTH, ppu.SCREEN_HEIGHT)
         }
 
         // Check breakpoint

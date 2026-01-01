@@ -1,21 +1,26 @@
 package main
 
-import "ppu"
-
 // Stub display type for headless builds
+// Only compiled when HEADLESS_ONLY is true
+when HEADLESS_ONLY {
+
 Display :: struct {}
 
-// Stub display functions for headless builds
-display_init :: proc(title: cstring) -> (display: Display, ok: bool) {
+// Initialize display (always fails in headless mode)
+display_init :: proc(title: cstring, width, height: i32) -> (display: Display, ok: bool) {
     return {}, false
 }
 
 display_destroy :: proc(display: ^Display) {}
 
-display_update :: proc(display: ^Display, framebuffer: ^[ppu.SCREEN_HEIGHT][ppu.SCREEN_WIDTH]u16) {}
+// Update display with framebuffer (no-op in headless mode)
+display_update :: proc(display: ^Display, framebuffer: [^]u16, width, height: i32) {}
 
+// Poll events - returns false to quit, true to continue
 display_poll_events :: proc() -> bool {
     return true
 }
 
 display_set_title :: proc(display: ^Display, fps: f64) {}
+
+} // when HEADLESS_ONLY

@@ -163,11 +163,11 @@ read_io8 :: proc(bus: ^Bus, addr: u32) -> (value: u8, cycles: u8) {
     case IO_POSTFLG:
         value = bus.postflg
     case IO_KEYINPUT, IO_KEYINPUT + 1:
-        // Return all buttons released (0x3FF)
+        // Return current key state from bus
         if offset == IO_KEYINPUT {
-            value = 0xFF
+            value = u8(bus.keyinput & 0xFF)
         } else {
-            value = 0x03
+            value = u8((bus.keyinput >> 8) & 0x03)
         }
     case:
         // Unimplemented register

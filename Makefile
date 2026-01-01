@@ -1,7 +1,7 @@
 # GBA-Odin Emulator Makefile
 # ===========================
 
-.PHONY: all build run clean debug test test-all \
+.PHONY: all build build-sdl run run-sdl clean debug debug-sdl test test-all \
         test-gb-cpu test-gb-ppu test-gb-bus test-gba-cpu test-gba-ppu \
         lint check check-warnings bench
 
@@ -12,16 +12,30 @@ all: build
 # Build targets
 # =============================================================================
 
+# Default: headless build (works everywhere, no SDL2 needed)
 build:
 	@mkdir -p build
-	odin build src -out:build/gba-odin
+	odin build src -out:build/gba-odin -define:HEADLESS_ONLY=true
+
+# SDL2 build: requires SDL2 installed (brew install sdl2)
+build-sdl:
+	@mkdir -p build
+	odin build src -out:build/gba-odin -define:HEADLESS_ONLY=false
 
 run: build
 	./build/gba-odin
 
+# Run with SDL2 display
+run-sdl: build-sdl
+	./build/gba-odin
+
 debug:
 	@mkdir -p build
-	odin build src -out:build/gba-odin -debug
+	odin build src -out:build/gba-odin -debug -define:HEADLESS_ONLY=true
+
+debug-sdl:
+	@mkdir -p build
+	odin build src -out:build/gba-odin -debug -define:HEADLESS_ONLY=false
 
 clean:
 	rm -rf build/
@@ -104,10 +118,13 @@ help:
 	@echo "GBA-Odin Emulator"
 	@echo ""
 	@echo "Build:"
-	@echo "  make build    - Build the emulator"
-	@echo "  make run      - Build and run"
-	@echo "  make debug    - Build with debug symbols"
-	@echo "  make clean    - Remove build artifacts"
+	@echo "  make build      - Build headless (no SDL2 needed)"
+	@echo "  make build-sdl  - Build with SDL2 display"
+	@echo "  make run        - Build and run (headless)"
+	@echo "  make run-sdl    - Build and run with display"
+	@echo "  make debug      - Build with debug symbols (headless)"
+	@echo "  make debug-sdl  - Build with debug symbols + SDL2"
+	@echo "  make clean      - Remove build artifacts"
 	@echo ""
 	@echo "Test:"
 	@echo "  make test     - Run all 163 unit tests"
